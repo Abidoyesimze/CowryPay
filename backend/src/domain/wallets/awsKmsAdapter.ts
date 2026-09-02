@@ -12,6 +12,7 @@ import {
   parseUnits,
   parseEther,
 } from "viem";
+import { toDataSuffix } from "@celo/attribution-tags";
 import { env } from "../../config/env.js";
 import { getChainConfig, getTokenConfig } from "./chains.js";
 import { PayoutLiquidityError, type CreatedWallet, type WalletAdapter, type WithdrawInput, type WithdrawResult } from "./adapter.js";
@@ -231,11 +232,19 @@ export const awsKmsWalletAdapter: WalletAdapter = {
       chain: viemChain,
       transport: http(rpcUrl),
     });
-    const data = encodeFunctionData({
+    let data = encodeFunctionData({
       abi: ERC20_TRANSFER_ABI,
       functionName: "transfer",
       args: [input.toAddress as `0x${string}`, parseUnits(input.amount, tokenDecimals)],
     });
+    // ERC-8021 attribution suffix (Agents at Work hackathon) — Celo-only,
+    // per env.celoAttributionTag's own comment. Appended after the real
+    // calldata, never replacing it: toDataSuffix returns just the suffix
+    // bytes, and the EVM ignores any trailing bytes past what transfer()'s
+    // own ABI decodes, which is exactly what ERC-8021 relies on.
+    if (input.chain === "celo") {
+      data = (data + toDataSuffix(env.celoAttributionTag).slice(2)) as `0x${string}`;
+    }
 
     const fetchFreshNonce = fetchPendingNonce(viemChain, rpcUrl, payoutAddress);
 

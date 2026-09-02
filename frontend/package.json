@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
-    "@cowry/agent-core": "file:../packages/agent-core",
     "@selfxyz/agent-sdk": "^0.2.1",
     "@supabase/supabase-js": "^2.111.0",
     "@upstash/redis": "^1.38.0",

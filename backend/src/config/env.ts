@@ -159,6 +159,13 @@ export const env = {
   // per-user key. Only required when walletProvider === "aws-kms".
   awsKmsPayoutKeyArn: process.env.AWS_KMS_PAYOUT_KEY_ARN,
   celoRpcUrl: process.env.CELO_RPC_URL ?? "https://forno.celo.org",
+  // ERC-8021 attribution tag for the Celo "Agents at Work" hackathon —
+  // registered against this repo's github.com/Abidoyesimze/CowryPay slug at
+  // celobuilders.xyz, locked to that value for the hackathon's duration.
+  // Only ever appended to Celo mainnet sends (awsKmsAdapter.ts's withdraw())
+  // — meaningless on the other EVM chains this codebase supports, and this
+  // codebase only needs Celo for the hackathon itself.
+  celoAttributionTag: process.env.CELO_ATTRIBUTION_TAG ?? "celo_9ef59d7031c8",
   baseRpcUrl: process.env.BASE_RPC_URL ?? "https://mainnet.base.org",
   optimismRpcUrl: process.env.OPTIMISM_RPC_URL ?? "https://mainnet.optimism.io",
   // Public fallback keeps the app bootable even if unset, same as the
