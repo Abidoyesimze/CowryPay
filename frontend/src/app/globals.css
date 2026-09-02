@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mobile Safari/Chrome flash a default tap-highlight color on any tap
+   target (links, buttons) the instant you touch it — separate from, and
+   NOT fixed by, any text-color utility class, since it's an overlay, not
+   text. Never themed to the app's green, so every tap on a link or button
+   shows a mismatched system-default flash. Tailwind's own base reset
+   doesn't touch this property, so it needs an explicit override. */
+a, button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Chat app pages need full height */
+.chat-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Subtle noise texture for dark sections */
+.noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+}
+
+/* Glow text effect */
+.glow-text {
+  text-shadow: 0 0 40px rgba(0, 212, 255, 0.5);
+}
+
+/* Infinite marquee scroll */
+@keyframes marquee-left {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+@keyframes marquee-right {
+  0%   { transform: translateX(-50%); }
+  100% { transform: translateX(0); }
+}
+.marquee-left {
+  animation: marquee-left 30s linear infinite;
+}
+.marquee-right {
+  animation: marquee-right 30s linear infinite;
+}
+
+/* Scrollable but no visible scrollbar track — used as an overflow safety net
+   on screens that should normally fit without scrolling. */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Gradient border */
+.gradient-border {
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  position: relative;
+}
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(0,212,255,0.4), rgba(123,47,190,0.4));
+  z-index: -1;
+}
