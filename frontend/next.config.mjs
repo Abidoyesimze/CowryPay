@@ -28,7 +28,14 @@ if (existsSync(agentEnvPath)) {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false,
-  transpilePackages: ["@cowry/agent-core", "viem", "openai"],
+  transpilePackages: ["viem", "openai"],
+  // @selfxyz/agent-sdk's barrel export pulls in @noble/ed25519 (ESM-only),
+  // which webpack can't bundle directly for a Node.js API route — this
+  // tells Next.js to leave it as a real require()/import at runtime
+  // instead, where Node resolves the ESM/CJS interop itself.
+  experimental: {
+    serverComponentsExternalPackages: ["@selfxyz/agent-sdk"],
+  },
 
   webpack(config, { isServer }) {
     // Suppress "Critical dependency: expression in require()" warning from ox/tempo
