@@ -9,56 +9,16 @@ import { env } from "../../config/env.js";
 import { formatAmount } from "../../utils/format.js";
 import type { ParsedIntent } from "./schemas.js";
 
-// The chains that currently participate in a working cross-chain-send
-// pair (see crossChainSend/bridge/cctpAdapter.ts and liFiAdapter.ts's own
-// SUPPORTED_CHAINS sets — this list must stay in sync with those, since
-// this is what gates the chat flow before either adapter is even
-// consulted). Optimism isn't included, even though its CCTP/LI.FI signing
-// paths both exist — deposits on Optimism are on hold (DEPOSIT_CHAINS in
-// ai-agent/chat/intent.ts), so no user can actually hold an Optimism
-// balance to send from yet. Re-add once Optimism deposits ship.
-//
-// Stellar was added 2026-09-01 (hand-built Soroban CCTP integration, see
-// crossChainSend/bridge/stellarCctpAdapter.ts) — this list gates broadly
-// (which chains exist at all in this feature), NOT precisely which pair
-// directions work; stellarCctpAdapter's own supports() is the exact
-// authority there. As of 2026-08-31, Stellar works as a destination
-// (Base/Optimism/Solana -> Stellar) AND as a source, but only to Base or
-// Solana (Stellar -> Base/Solana; Stellar -> Celo cleanly fails, since
-// Celo routes through liFiAdapter regardless, which has no Stellar
-// support). See explainUnsupportedBridgePairMessage below for the exact
-// per-pair messaging.
-export const ALL_CROSS_CHAIN_SEND_CHAINS = ["celo", "base", "solana", "stellar"];
+// Celo is the ONLY source now (Agents at Work hackathon narrowing — see
+// crossChainSend/service.ts's own sourceChain guard), so the agent only
+// ever needs to extract a DESTINATION chain from natural language, never
+// ask the user to name where the funds currently are. Must stay in sync
+// with liFiAdapter.ts's own SUPPORTED_CHAINS (minus "celo" itself, which
+// isn't a valid destination for its own cross-chain send).
+export const DESTINATION_CHAINS = ["base", "optimism", "solana"];
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// Stellar's real coverage right now: stellarCctpAdapter's own
-// NON_STELLAR_SOURCE_CHAINS/STELLAR_SOURCE_DESTINATION_CHAINS also list
-// "optimism", but DEPOSIT_CHAINS (see ai-agent/chat/intent.ts) excludes
-// Optimism entirely — deposits there are on hold, so no user can ever
-// actually hold an Optimism balance to send from or land funds meant to be
-// spent from. Dropped here for that reason, not because the adapter itself
-// rejects it.
-const STELLAR_DESTINATION_SOURCE_CHAINS = ["base", "solana"]; // chains that can send TO Stellar
-const STELLAR_SOURCE_DESTINATION_CHAINS = ["base", "solana"]; // chains Stellar can send TO
-
-// bridge.supports() returning false covers a few structurally different
-// cases that a flat "isn't supported yet" doesn't distinguish — same
-// vague-error problem providerSelection.ts's explainNoProviderMessage
-// already fixed for offramp. Stellar is the one asymmetric-coverage chain
-// right now (both directions work, but each only for two of the four
-// chains a user can actually hold a balance on), so a Celo<->Stellar
-// attempt deserves a real explanation, not a dead end.
-function explainUnsupportedBridgePairMessage(sourceChain: string, destinationChain: string): string {
-  if (destinationChain === "stellar") {
-    return `Sending from ${capitalize(sourceChain)} to Stellar isn't supported yet. Stellar can currently be reached from: ${STELLAR_DESTINATION_SOURCE_CHAINS.map(capitalize).join(", ")}.`;
-  }
-  if (sourceChain === "stellar") {
-    return `Sending from Stellar to ${capitalize(destinationChain)} isn't supported yet. From Stellar, you can currently send to: ${STELLAR_SOURCE_DESTINATION_CHAINS.map(capitalize).join(", ")}.`;
-  }
-  return `Sending from ${capitalize(sourceChain)} to ${capitalize(destinationChain)} isn't supported yet.`;
 }
 
 export interface CrossChainSendDraft {
@@ -86,12 +46,11 @@ export type CrossChainSendResolution =
 // unrelated request then names a genuinely different destinationChain
 // without repeating the address, blindly reusing the OLD address (meant
 // for a different chain) risks exactly the §9 "wrong destination is
-// unrecoverable" failure this whole flow exists to prevent — an EVM-to-
-// EVM chain change wouldn't even be caught by a format mismatch the way
-// this specific Solana case happened to be. Dropped (not carried over)
-// whenever destinationChainHint is both present and actually different
-// from what the stale draft had; a genuinely continuing conversation
-// (same chain, still filling in the address) is unaffected.
+// unrecoverable" failure this whole flow exists to prevent. Dropped (not
+// carried over) whenever destinationChainHint is both present and
+// actually different from what the stale draft had; a genuinely
+// continuing conversation (same chain, still filling in the address) is
+// unaffected.
 export function mergeCrossChainSendDrafts(
   existing: CrossChainSendIntent,
   incoming: CrossChainSendIntent,
@@ -117,7 +76,8 @@ export function mergeCrossChainSendDrafts(
 // the user in full (both chains, the exact address, the fee, the
 // estimate) for explicit review before they enter their PIN and the app
 // calls the real, unchanged POST /cross-chain-sends endpoint directly —
-// chat never calls it.
+// chat never calls it, and the PIN gate is unchanged even though the
+// agent is now the one assembling this draft.
 export async function resolveCrossChainSendIntent(
   userId: string,
   intent: CrossChainSendIntent,
@@ -139,44 +99,36 @@ export async function resolveCrossChainSendIntent(
     return { ok: false, message: "What's the destination wallet address?" };
   }
 
-  const sourceChain = intent.sourceChainHint?.toLowerCase();
-  const destinationChain = intent.destinationChainHint?.toLowerCase();
+  // Source is always Celo — if the user named a different chain as where
+  // their funds currently are, that's simply wrong (nothing else holds a
+  // balance), so it's called out rather than silently overridden.
+  const sourceChain = "celo";
+  if (intent.sourceChainHint && intent.sourceChainHint.toLowerCase() !== "celo") {
+    return {
+      ok: false,
+      message: `Your balance is on Celo — cross-chain send always starts from there. Which chain would you like to send to: ${DESTINATION_CHAINS.map(capitalize).join(", ")}?`,
+    };
+  }
 
-  if (sourceChain && !ALL_CROSS_CHAIN_SEND_CHAINS.includes(sourceChain)) {
+  const destinationChain = intent.destinationChainHint?.toLowerCase();
+  if (destinationChain && !DESTINATION_CHAINS.includes(destinationChain)) {
     return {
       ok: false,
-      message: `"${intent.sourceChainHint}" isn't a chain cross-chain send supports yet. Which one: ${ALL_CROSS_CHAIN_SEND_CHAINS.map(capitalize).join(", ")}?`,
+      message: `"${intent.destinationChainHint}" isn't a chain cross-chain send supports yet. Which one: ${DESTINATION_CHAINS.map(capitalize).join(", ")}?`,
     };
-  }
-  if (destinationChain && !ALL_CROSS_CHAIN_SEND_CHAINS.includes(destinationChain)) {
-    return {
-      ok: false,
-      message: `"${intent.destinationChainHint}" isn't a chain cross-chain send supports yet. Which one: ${ALL_CROSS_CHAIN_SEND_CHAINS.map(capitalize).join(", ")}?`,
-    };
-  }
-  if (!sourceChain) {
-    return { ok: false, message: "Which chain do you currently have the funds on?" };
   }
   if (!destinationChain) {
-    return { ok: false, message: "Which chain would you like it sent to?" };
-  }
-  if (sourceChain === destinationChain) {
-    return {
-      ok: false,
-      message: `Those are the same chain — for a regular withdrawal that stays on ${capitalize(sourceChain)}, just say "withdraw" instead of "send cross-chain".`,
-    };
+    return { ok: false, message: `Which chain would you like it sent to: ${DESTINATION_CHAINS.map(capitalize).join(", ")}?` };
   }
 
   // Checked before anything else chain-specific — a pair the bridge layer
   // doesn't support yet should fail clean here, not partway through
-  // balance/fee checks. See crossChainSend/bridge/index.ts's own
-  // dispatch — Celo routes through liFiAdapter.ts, everything else
-  // through cctpAdapter.ts.
+  // balance/fee checks.
   const bridge = getBridgeAdapter(sourceChain, destinationChain);
   if (!bridge.supports(sourceChain, destinationChain)) {
     return {
       ok: false,
-      message: explainUnsupportedBridgePairMessage(sourceChain, destinationChain),
+      message: `Sending from Celo to ${capitalize(destinationChain)} isn't supported yet.`,
     };
   }
 
@@ -189,12 +141,10 @@ export async function resolveCrossChainSendIntent(
 
   // Omitted means USDC, the only token that existed before USDT support.
   const tokenSymbol = intent.tokenHint?.toUpperCase() ?? env.defaultTokenSymbol;
-  if (["celo", "base"].includes(sourceChain)) {
-    try {
-      getTokenConfig(sourceChain, tokenSymbol);
-    } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
-    }
+  try {
+    getTokenConfig(sourceChain, tokenSymbol);
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
 
   const wallet = await walletsRepo.findByUserIdAndChain(userId, walletChainKeyFor(sourceChain));
@@ -245,24 +195,9 @@ export async function resolveCrossChainSendIntent(
   const draft: CrossChainSendDraft = { amount: amountStr, toAddress: intent.toAddress, sourceChain, destinationChain, tokenSymbol };
   const etaMinutes = Math.max(1, Math.round(quote.estimatedSeconds / 60));
 
-  // Stellar-specific caveat: the mint lands via a Soroban contract call
-  // (mint_and_forward), not a classic `payment` operation. Any Stellar
-  // service that credits deposits by scanning for `payment` ops keyed to
-  // a memo — including this platform's own stellarDepositScanner.ts —
-  // will never see it, memo or no memo. That makes a shared/omnibus
-  // Stellar address (e.g. an exchange deposit address requiring a memo)
-  // unsafe as a destination even though its G... address looks like any
-  // other valid one; only a genuine individually-owned account is safe.
-  // This can't be detected from the address format alone, so it's a
-  // warning, not a hard block.
-  const stellarMemoWarning =
-    destinationChain === "stellar"
-      ? " Note: this only works for a genuine personal Stellar wallet address. Do NOT send to an exchange or platform deposit address that requires a memo — funds sent that way will not be credited."
-      : "";
-
   return {
     ok: true,
     draft,
-    summary: `Ready to send ${amountStr} ${tokenSymbol} from ${capitalize(sourceChain)} to ${intent.toAddress} on ${capitalize(destinationChain)}. Fee: ${split.feeAmount} ${tokenSymbol} — you'll receive approximately ${quote.destinationAmount} ${tokenSymbol} (the exact amount can vary slightly on this route). Estimated time: ~${etaMinutes} minute${etaMinutes === 1 ? "" : "s"}. Double-check that address and chain carefully — crypto sent cross-chain to the wrong address can't be recovered.${stellarMemoWarning} Confirm in the app to enter your PIN and complete it.`,
+    summary: `Ready to send ${amountStr} ${tokenSymbol} from Celo to ${intent.toAddress} on ${capitalize(destinationChain)}. Fee: ${split.feeAmount} ${tokenSymbol} — you'll receive approximately ${quote.destinationAmount} ${tokenSymbol} (the exact amount can vary slightly on this route). Estimated time: ~${etaMinutes} minute${etaMinutes === 1 ? "" : "s"}. Double-check that address and chain carefully — crypto sent cross-chain to the wrong address can't be recovered. Confirm in the app to enter your PIN and complete it.`,
   };
 }

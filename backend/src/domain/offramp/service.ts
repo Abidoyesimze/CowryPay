@@ -12,7 +12,6 @@ import { canInitiateSend } from "../sendAuthorization.js";
 import { verifyTransactionPin } from "../pin/service.js";
 import { createOfframpOrder, type CreatedOrder } from "./paycrestAdapter.js";
 import { createOfframpOrder as createQuidaxOrder } from "./quidaxAdapter.js";
-import { createOfframpOrder as createCentiivOrder } from "./centiivAdapter.js";
 import { computeFeeSplit, requireTreasuryAddress } from "./fee.js";
 import { sendsRepo } from "./repository.js";
 import { isPaycrestEligible, type OfframpProvider } from "./providerSelection.js";
@@ -173,30 +172,21 @@ export async function initiateSend(userId: string, input: InitiateSendInput): Pr
 
   // Every EVM chain (celo/base/optimism) shares one wallet row, always
   // registered under env.defaultChain — one KMS/Blockradar address covers
-  // all of them, so "which EVM chain to send from" (input.chain) and
-  // "which wallet row to look up" are different questions there. Stellar
-  // and Solana are both genuine exceptions: each has its own dedicated
-  // wallet row, keyed under its own chain name. Mirrors
-  // cryptoWithdrawals/service.ts's walletChainKeyFor exactly — this used
-  // to only special-case "stellar", which meant a Solana send fetched the
-  // user's EVM wallet row instead of their Solana one. That wrong `wallet`
-  // was still only used for its `.provider` field further down (`chain`
-  // itself came from effectiveChainInput, so routing was never wrong) —
-  // but that provider field is now aws-kms for virtually every user after
-  // the Blockradar cutover, which made `wallet.provider === "aws-kms"`
-  // true for a Solana send too, wrongly triggering the EVM-only
-  // post-payout confirmation wait below on a Solana chain — see that
-  // block's own comment for what that produced live (2026-08-25, send
-  // fa6e221f): a real, successful Solana payout reported to the user as
-  // failed, because the confirmation check crashed on "solana" being an
-  // unsupported EVM chain in chains.ts, after the money had already gone.
+  // all of them. The Stellar/Solana wallet-chain-key special-casing this
+  // used to need is gone along with those chains as off-ramp sources
+  // (Agents at Work hackathon narrowing) — celo is the only chain that can
+  // reach this function now.
   const effectiveChainInput = lockedPreview?.chain ?? input.chain;
-  const walletChainKey =
-    effectiveChainInput?.toLowerCase() === "stellar"
-      ? "stellar"
-      : effectiveChainInput?.toLowerCase() === "solana"
-        ? "solana"
-        : env.defaultChain;
+  // Celo is the only chain this codebase takes deposits on now (Agents at
+  // Work hackathon narrowing) — a stale client asking to send from
+  // Base/Optimism would otherwise fall through to a confusing generic
+  // "Insufficient balance" (the ledger genuinely has no balance on those
+  // chains, since nothing deposits there anymore) rather than an honest
+  // explanation of why.
+  if (effectiveChainInput && effectiveChainInput.toLowerCase() !== "celo") {
+    throw new Error(`Sending is only supported from Celo (got "${effectiveChainInput}").`);
+  }
+  const walletChainKey = env.defaultChain;
   const wallet = await walletsRepo.findByUserIdAndChain(userId, walletChainKey);
   if (!wallet) throw new Error("No wallet found for user");
   const chain = effectiveChainInput ?? wallet.chain;
@@ -287,9 +277,6 @@ export async function initiateSend(userId: string, input: InitiateSendInput): Pr
     };
     if (provider === "quidax") {
       return createQuidaxOrder({ amount: netAmount, network: chain, token: tokenSymbol, fiatCurrency: input.fiatCurrency, recipient, reference });
-    }
-    if (provider === "centiiv") {
-      return createCentiivOrder({ amount: netAmount, network: chain, token: tokenSymbol, fiatCurrency: input.fiatCurrency, recipient, reference });
     }
     return createOfframpOrder({
       amount: netAmount,

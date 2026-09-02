@@ -4,10 +4,8 @@ import type { Deposit } from "../../types.js";
 import { ledgerRepo } from "../ledger/repository.js";
 import { walletsRepo } from "../wallets/repository.js";
 import { sweepWallet as sweepEvmWallet } from "../wallets/depositSweeper.js";
-import { sweepWallet as sweepSolanaWallet } from "../wallets/solanaDepositSweeper.js";
 import { getWalletAddress } from "../wallets/awsKmsAdapter.js";
-import { getSolanaMint } from "../wallets/solanaAdapter.js";
-import { SUPPORTED_CHAINS as AWS_KMS_SWEEP_CHAINS } from "../wallets/chains.js";
+import { DEPOSIT_CHAINS as AWS_KMS_SWEEP_CHAINS } from "../wallets/chains.js";
 import { depositsRepo } from "./repository.js";
 import { screenDeposit } from "./screening.js";
 
@@ -28,34 +26,23 @@ import { screenDeposit } from "./screening.js";
 // moment their own specific deposit gets unstuck (offramp/service.ts's
 // just-in-time sweep only helps the current spender's own EVM wallet;
 // that remains a narrower backstop, this is the actual fix). Best-effort
-// and non-blocking on both branches — a sweep failure must never undo or
-// delay the deposit credit itself, same "don't let an ancillary step
-// break the main path" stance as registerSolanaWebhookAddress in
-// solanaAdapter.ts. Stellar has no equivalent because it has no per-user
-// wallet to sweep from at all — every deposit already lands directly in
-// the same account that pays out.
+// and non-blocking — a sweep failure must never undo or delay the deposit
+// credit itself. Solana/Stellar sweeping (and their whole deposit-side
+// custody model) is gone with the Agents at Work Celo-only narrowing —
+// AWS_KMS_SWEEP_CHAINS (DEPOSIT_CHAINS) is Celo-only now too.
 async function triggerSweepAfterCredit(deposit: Deposit): Promise<void> {
   try {
-    if (AWS_KMS_SWEEP_CHAINS.includes(deposit.chain)) {
-      if (!env.awsKmsPayoutKeyArn) return;
-      const wallet = await walletsRepo.findByUserIdAndChain(deposit.userId, deposit.chain);
-      if (!wallet || wallet.provider !== "aws-kms") return;
-      const payoutAddress = await getWalletAddress(env.awsKmsPayoutKeyArn);
-      await sweepEvmWallet(
-        deposit.chain,
-        deposit.tokenSymbol,
-        { externalWalletId: wallet.externalWalletId, address: wallet.address as `0x${string}` },
-        { keyArn: env.awsKmsPayoutKeyArn, address: payoutAddress },
-      );
-      return;
-    }
-
-    if (deposit.chain === "solana") {
-      const mint = getSolanaMint(deposit.tokenSymbol);
-      const wallet = await walletsRepo.findByUserIdAndChain(deposit.userId, "solana");
-      if (!wallet) return;
-      await sweepSolanaWallet({ address: wallet.address, externalWalletId: wallet.externalWalletId }, mint);
-    }
+    if (!AWS_KMS_SWEEP_CHAINS.includes(deposit.chain)) return;
+    if (!env.awsKmsPayoutKeyArn) return;
+    const wallet = await walletsRepo.findByUserIdAndChain(deposit.userId, deposit.chain);
+    if (!wallet || wallet.provider !== "aws-kms") return;
+    const payoutAddress = await getWalletAddress(env.awsKmsPayoutKeyArn);
+    await sweepEvmWallet(
+      deposit.chain,
+      deposit.tokenSymbol,
+      { externalWalletId: wallet.externalWalletId, address: wallet.address as `0x${string}` },
+      { keyArn: env.awsKmsPayoutKeyArn, address: payoutAddress },
+    );
   } catch (err) {
     console.error(`[deposit] auto-sweep-on-deposit failed for deposit ${deposit.id}:`, err);
   }

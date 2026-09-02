@@ -79,11 +79,8 @@ export function ChatInterface() {
   useEffect(() => {
     if (authLoading || hasGreetedRef.current || !user || !wallet) return;
     hasGreetedRef.current = true;
-    // No address in the welcome text anymore — a user now has three genuinely
-    // different deposit flows (shared EVM address, dedicated Solana address,
-    // shared Stellar address + memo), so auto-showing just one by default
-    // would be incomplete. The Deposit suggestion/command opens DepositModal
-    // to pick one instead.
+    // No address in the welcome text itself — the Deposit suggestion/command
+    // opens DepositModal to show it instead.
     void getChatWelcome()
       .then(({ reply }) => addBotMessage(reply))
       .catch(() => {
@@ -364,7 +361,7 @@ export function ChatInterface() {
 
       <div className="hidden lg:flex items-center justify-between px-10 py-3 text-xs text-cowry-muted flex-shrink-0">
         <span>© 2026 CowryPay</span>
-        <span>Live on Celo, Base, Solana &amp; Stellar</span>
+        <span>Native to Celo — bridges to Base, Optimism &amp; Solana</span>
       </div>
 
       {recordError && (
@@ -413,7 +410,6 @@ export function ChatInterface() {
       {showDeposit && wallet && (
         <DepositModal
           wallet={wallet}
-          initialChain={depositInitialChain}
           onClose={() => { setShowDeposit(false); setDepositInitialChain(null); }}
         />
       )}

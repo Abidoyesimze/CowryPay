@@ -1,12 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import {
-  getCryptoWithdrawal,
-  getSolanaWallet,
-  getStellarWallet,
-  type CryptoWithdrawal,
-  type Wallet,
-} from "@/lib/backendApi";
+import { getCryptoWithdrawal, type CryptoWithdrawal, type Wallet } from "@/lib/backendApi";
 import { describeCryptoWithdrawalState } from "@/lib/txState";
 import { explorerUrlFor } from "@/lib/explorer";
 import { formatToken } from "@/lib/currency";
@@ -77,24 +71,12 @@ export function CryptoWithdrawalReceiptModal({ withdrawalId, wallet, onClose }: 
     };
   }, [withdrawalId]);
 
+  // Withdrawals only support Celo now — always the wallet already loaded,
+  // no separate fetch needed (unlike when Solana/Stellar had their own
+  // dedicated wallet rows).
   useEffect(() => {
     if (!withdrawal) return;
-    const chain = withdrawal.chain.toLowerCase();
-    if (chain === "celo" || chain === "base" || chain === "optimism") {
-      setSenderAddress(wallet.address);
-      return;
-    }
-    const fetcher = chain === "solana" ? getSolanaWallet : chain === "stellar" ? getStellarWallet : null;
-    if (!fetcher) return;
-    let cancelled = false;
-    fetcher()
-      .then((w) => {
-        if (!cancelled) setSenderAddress(w.address);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    setSenderAddress(wallet.address);
   }, [withdrawal, wallet.address]);
 
   const state = withdrawal?.state;

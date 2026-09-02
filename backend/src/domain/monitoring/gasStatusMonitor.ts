@@ -1,10 +1,7 @@
 import { createPublicClient, http, formatEther } from "viem";
-import { Horizon } from "@stellar/stellar-sdk";
-import { address as toAddress, createSolanaRpc } from "@solana/kit";
 import { env } from "../../config/env.js";
-import { getChainConfig, SUPPORTED_CHAINS } from "../wallets/chains.js";
+import { getChainConfig, DEPOSIT_CHAINS } from "../wallets/chains.js";
 import { getWalletAddress } from "../wallets/awsKmsAdapter.js";
-import { getSolanaTreasurySigner } from "../wallets/solanaKms.js";
 import { sendTelegramOpsAlert } from "./telegram.js";
 
 interface BalanceCheck {
@@ -38,46 +35,6 @@ async function checkEvmChain(chain: string, payoutAddress: `0x${string}`): Promi
   ];
 }
 
-async function checkStellar(): Promise<BalanceCheck[]> {
-  if (!env.stellarDepositAddress) return [];
-  const server = new Horizon.Server(env.stellarHorizonUrl);
-  const account = await server.loadAccount(env.stellarDepositAddress);
-
-  const nativeBalance = Number(account.balances.find((b) => b.asset_type === "native")?.balance ?? "0");
-  const xlmThreshold = Number(env.stellarXlmAlertThreshold);
-
-  return [
-    {
-      key: "stellar-gas",
-      label: "Stellar gas (XLM)",
-      balance: String(nativeBalance),
-      threshold: String(xlmThreshold),
-      ok: nativeBalance >= xlmThreshold,
-    },
-  ];
-}
-
-async function checkSolana(): Promise<BalanceCheck[]> {
-  if (!env.solanaTreasurySigningKeyCiphertext) return [];
-  const treasury = await getSolanaTreasurySigner();
-  const rpc = createSolanaRpc(env.solanaRpcUrl);
-  const owner = toAddress(treasury.address);
-
-  const solBalance = await rpc.getBalance(owner).send();
-  const solThreshold = Number(env.solanaSolAlertThreshold);
-  const solBalanceHuman = Number(solBalance.value) / 1e9;
-
-  return [
-    {
-      key: "solana-gas",
-      label: "Solana treasury (SOL)",
-      balance: String(solBalanceHuman),
-      threshold: String(solThreshold),
-      ok: solBalanceHuman >= solThreshold,
-    },
-  ];
-}
-
 // Which checks are currently below threshold, as of the last cycle — used
 // to alert only on a state CHANGE (crossing below, or recovering back
 // above) instead of repeating the same alert every single cycle forever
@@ -91,12 +48,14 @@ async function getAllChecks(): Promise<BalanceCheck[]> {
 
   if (env.awsKmsPayoutKeyArn) {
     const payoutAddress = await getWalletAddress(env.awsKmsPayoutKeyArn);
-    for (const chain of SUPPORTED_CHAINS) {
+    // DEPOSIT_CHAINS (Celo-only), not the full chain registry — Base/
+    // Optimism are kept in chains.ts purely for bridge-destination token
+    // lookups now, and we never need gas there (destination legs are
+    // delivered by LI.FI's own relayer, never signed by us).
+    for (const chain of DEPOSIT_CHAINS) {
       checks.push(...(await checkEvmChain(chain, payoutAddress)));
     }
   }
-  checks.push(...(await checkStellar()));
-  checks.push(...(await checkSolana()));
   return checks;
 }
 

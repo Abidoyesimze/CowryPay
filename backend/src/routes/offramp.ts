@@ -3,7 +3,6 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { getInstitutions, verifyRecipientAccount } from "../domain/offramp/paycrestAdapter.js";
 import { getInstitutions as getQuidaxInstitutions } from "../domain/offramp/quidaxAdapter.js";
-import { getInstitutions as getCentiivInstitutions } from "../domain/offramp/centiivAdapter.js";
 import { selectOfframpProvider } from "../domain/offramp/providerSelection.js";
 import { initiateSend } from "../domain/offramp/service.js";
 import { sendsRepo } from "../domain/offramp/repository.js";
@@ -56,20 +55,13 @@ offrampRouter.get("/offramp/rate", async (req: Request, res: Response) => {
 // Public — no account/API key required to list institutions. `?provider=`
 // picks which provider's bank-code namespace to return (default paycrest,
 // unchanged from before Quidax existed) — pass whichever provider
-// GET /offramp/rate selected (or, for Centiiv, whichever the caller
-// explicitly chose — it's never auto-selected, see providerSelection.ts),
-// since the code the user picks here must match the provider the send
-// actually uses.
+// GET /offramp/rate selected, since the code the user picks here must
+// match the provider the send actually uses.
 offrampRouter.get("/offramp/institutions/:currencyCode", async (req: Request, res: Response) => {
-  const provider =
-    req.query.provider === "quidax" ? "quidax" : req.query.provider === "centiiv" ? "centiiv" : "paycrest";
+  const provider = req.query.provider === "quidax" ? "quidax" : "paycrest";
   try {
     const institutions =
-      provider === "quidax"
-        ? await getQuidaxInstitutions(req.params.currencyCode)
-        : provider === "centiiv"
-          ? await getCentiivInstitutions() // no currency param — Centiiv's bank list is NGN-only today, see centiivAdapter.ts
-          : await getInstitutions(req.params.currencyCode);
+      provider === "quidax" ? await getQuidaxInstitutions(req.params.currencyCode) : await getInstitutions(req.params.currencyCode);
     res.json({ institutions, provider });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
@@ -79,7 +71,7 @@ offrampRouter.get("/offramp/institutions/:currencyCode", async (req: Request, re
 const VerifyRecipientSchema = z.object({
   institution: z.string().min(1),
   accountIdentifier: z.string().min(1),
-  provider: z.enum(["paycrest", "quidax", "centiiv"]).optional(),
+  provider: z.enum(["paycrest", "quidax"]).optional(),
 });
 
 offrampRouter.post("/offramp/verify-recipient", requireAuth, async (req: Request, res: Response) => {
@@ -88,14 +80,11 @@ offrampRouter.post("/offramp/verify-recipient", requireAuth, async (req: Request
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid request" });
     return;
   }
-  // Quidax has no name-lookup API at all. Centiiv actually DOES verify the
-  // account name live — but only as part of full order creation (POST
-  // /requests), not as a standalone pre-check endpoint (searched, found
-  // none). Same practical gap for both: no way to preview the name before
-  // committing to a send.
-  if (parsed.data.provider === "quidax" || parsed.data.provider === "centiiv") {
+  // Quidax has no name-lookup API at all — no way to preview the name
+  // before committing to a send.
+  if (parsed.data.provider === "quidax") {
     res.status(400).json({
-      error: `${parsed.data.provider === "quidax" ? "Quidax" : "Centiiv"} doesn't support looking up an account name before sending — collect the recipient's name directly, it'll be verified when the send is confirmed.`,
+      error: `Quidax doesn't support looking up an account name before sending — collect the recipient's name directly, it'll be verified when the send is confirmed.`,
     });
     return;
   }
@@ -128,7 +117,7 @@ const ExistingOrderSchema = z.object({
   // Which provider this chat-locked order was actually created with —
   // required now that remittanceDraft.ts can lock either provider, not
   // just Paycrest (see service.ts's LockedOrder for why this matters).
-  provider: z.enum(["paycrest", "quidax", "centiiv"]),
+  provider: z.enum(["paycrest", "quidax"]),
   // Which token this order was actually quoted/created for — omitted means
   // USDC (see service.ts's LockedOrder.tokenSymbol comment).
   tokenSymbol: z.string().min(1).optional(),
@@ -142,14 +131,14 @@ const CreateSendSchema = z.object({
   rate: z.string().optional(),
   existingOrder: ExistingOrderSchema.optional(),
   // Which chain to send from — optional, defaults to the wallet's chain
-  // (see domain/offramp/service.ts). Only meaningful once a wallet can
-  // hold balance on more than one chain (Phase 7 migration plan).
+  // (see domain/offramp/service.ts). Celo-only now (Agents at Work
+  // hackathon narrowing) — service.ts rejects anything else explicitly.
   chain: z.string().optional(),
   // Which off-ramp provider to use — must match whichever provider's
   // institution list `recipient.institution` was picked from (see
   // GET /offramp/rate and GET /offramp/institutions?provider=). Omitted
   // means Paycrest, unchanged from before Quidax existed.
-  provider: z.enum(["paycrest", "quidax", "centiiv"]).optional(),
+  provider: z.enum(["paycrest", "quidax"]).optional(),
   // Which token to send — omitted means USDC, unchanged from before USDT
   // support existed.
   tokenSymbol: z.string().min(1).optional(),

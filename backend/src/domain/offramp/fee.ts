@@ -51,35 +51,13 @@ export function computeCrossChainSendFeeSplit(amount: string): FeeSplit | null {
   return computeFeeSplitWithFloor(amount, env.crossChainSendMinFeeUsd);
 }
 
-// Chain-aware — a real, live bug until fixed: this used to return one
-// single EVM address (REMITTANCE_TREASURY_ADDRESS) regardless of chain,
-// which is a hex address invalid on Stellar/Solana. Harmless as long as
-// off-ramping FROM Stellar/Solana wasn't actually possible; Centiiv made
-// it real (see centiivAdapter.ts), so the fee-sweep step in service.ts
-// would otherwise have started failing silently on every Stellar/Solana
-// send, on every provider, not just Centiiv (the sweep runs after ANY
-// successful payout broadcast, unconditional on which off-ramp provider
-// was used).
-//
-// Stellar/Solana each use their OWN dedicated fee-only treasury address
-// (STELLAR_TREASURY_FEE_ADDRESS / SOLANA_TREASURY_FEE_ADDRESS) —
-// deliberately separate from those chains' shared deposit/operational
-// treasury, per direct instruction, mirroring how the EVM treasury
-// address is already its own address distinct from the payout wallet.
+// Celo-only now (Agents at Work hackathon narrowing) — the Stellar/Solana
+// dedicated fee-treasury branches this used to have are gone along with
+// those chains as off-ramp/withdrawal sources. Still async/chain-parameterized
+// (not a bare constant) so a second EVM chain could be added back the same
+// way without changing every call site.
 export async function requireTreasuryAddress(chain: string): Promise<string> {
-  const c = chain.toLowerCase();
-  if (c === "stellar") {
-    if (!env.stellarTreasuryFeeAddress) {
-      throw new Error("STELLAR_TREASURY_FEE_ADDRESS must be set to process Stellar remittances");
-    }
-    return env.stellarTreasuryFeeAddress;
-  }
-  if (c === "solana") {
-    if (!env.solanaTreasuryFeeAddress) {
-      throw new Error("SOLANA_TREASURY_FEE_ADDRESS must be set to process Solana remittances");
-    }
-    return env.solanaTreasuryFeeAddress;
-  }
+  void chain;
   if (!env.remittanceTreasuryAddress) {
     throw new Error("REMITTANCE_TREASURY_ADDRESS must be set to process remittances");
   }

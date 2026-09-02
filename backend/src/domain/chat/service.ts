@@ -4,8 +4,6 @@ import { ledgerRepo } from "../ledger/repository.js";
 import { sendsRepo } from "../offramp/repository.js";
 import { crossChainSendsRepo } from "../crossChainSend/repository.js";
 import { walletsRepo } from "../wallets/repository.js";
-import { ensureStellarWallet, ensureSolanaWallet } from "../users/service.js";
-import { ensureSolanaUsdtAta } from "../wallets/solanaAdapter.js";
 import { classifyIntent, matchDepositChainRequest, DEPOSIT_CHAINS } from "../../ai-agent/chat/intent.js";
 import {
   buildAddressMessage,
@@ -13,8 +11,6 @@ import {
   buildChainsMessage,
   buildCrossChainSendChainsMessage,
   buildHelpMessage,
-  buildSolanaAddressMessage,
-  buildStellarAddressMessage,
   buildTxHistoryMessage,
   buildWelcomeMessage,
   formatChainList,
@@ -132,21 +128,6 @@ export async function handleChatMessage(userId: string, message: string): Promis
 
     if (!chain) {
       return { reply: `Which chain would you like to deposit to? ${formatChainList(DEPOSIT_CHAINS, "or")}.` };
-    }
-
-    if (chain === "stellar") {
-      const wallet = await ensureStellarWallet(userId);
-      return { reply: buildStellarAddressMessage(wallet) };
-    }
-
-    if (chain === "solana") {
-      const wallet = await ensureSolanaWallet(userId);
-      // USDT's ATA isn't created eagerly anymore (solanaAdapter.ts) — only
-      // pay for it, and only tell the user their address accepts USDT, once
-      // they've actually asked about USDT specifically.
-      const wantsUsdt = /\busdt\b/i.test(message);
-      if (wantsUsdt) await ensureSolanaUsdtAta(wallet.address);
-      return { reply: buildSolanaAddressMessage(wallet, wantsUsdt) };
     }
 
     const wallet = await walletsRepo.findByUserIdAndChain(userId, env.defaultChain);

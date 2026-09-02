@@ -163,7 +163,5 @@ export type Message = {
   /** Set only on the post-auth welcome message — renders a copyable address card. */
   depositAddress?: string;
   depositChain?: string;
-  /** True for a self-custody (aws-kms) wallet — the same address accepts deposits on every supported chain, not just `depositChain`. */
-  depositMultiChain?: boolean;
 };
 

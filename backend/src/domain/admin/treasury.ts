@@ -1,11 +1,9 @@
 import { createPublicClient, formatUnits, formatEther, http } from "viem";
-import { Horizon } from "@stellar/stellar-sdk";
 import { createSolanaRpc, address as toSolanaAddress } from "@solana/kit";
 import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { env } from "../../config/env.js";
 import { getChainConfig, SUPPORTED_CHAINS } from "../wallets/chains.js";
 import { getWalletAddress } from "../wallets/awsKmsAdapter.js";
-import { getSolanaTreasurySigner } from "../wallets/solanaKms.js";
 import { ledgerRepo } from "../ledger/repository.js";
 
 const ERC20_BALANCE_ABI = [
@@ -78,25 +76,11 @@ async function evmWithNative(chain: string, address: `0x${string}`, nativeSymbol
   };
 }
 
-// Stellar stays USDC-only, deliberately — USDT was never added here (see
-// chains.ts's own comment on the Celo/Solana-only scope decision).
-async function stellarBalance(address: string, includeNative: boolean): Promise<WalletBalance> {
-  if (!env.stellarUsdcIssuer) throw new Error("STELLAR_USDC_ISSUER not configured");
-  const server = new Horizon.Server(env.stellarHorizonUrl);
-  const account = await server.loadAccount(address);
-  const usdcLine = account.balances.find(
-    (b: any) => b.asset_code === "USDC" && b.asset_issuer === env.stellarUsdcIssuer,
-  ) as { balance: string } | undefined;
-  const nativeLine = includeNative ? account.balances.find((b: any) => b.asset_type === "native") : undefined;
-  return {
-    chain: "stellar",
-    address,
-    tokens: { USDC: usdcLine?.balance ?? "0" },
-    native: nativeLine ? { symbol: "XLM", amount: (nativeLine as { balance: string }).balance } : null,
-    error: null,
-  };
-}
-
+// Solana is destination-only now (no treasury signer exists anymore — see
+// solanaAdapter.ts's own comment), but this stays as a pure read-only
+// balance check: it only needs an address string, not a private key, so
+// it can still show a historical/leftover fee-treasury balance on the
+// dashboard even though nothing new routes there.
 async function solanaBalance(address: string, includeNative: boolean): Promise<WalletBalance> {
   const rpc = createSolanaRpc(env.solanaRpcUrl);
   const owner = toSolanaAddress(address);
@@ -124,15 +108,12 @@ async function solanaBalance(address: string, includeNative: boolean): Promise<W
 }
 
 export interface TreasurySnapshot {
-  // What the platform has actually earned — the 3 dedicated fee-sweep
-  // destinations (see fee.ts's requireTreasuryAddress), never the shared
-  // operational wallets below.
+  // What the platform has actually earned — the fee-sweep destination
+  // (see fee.ts's requireTreasuryAddress) plus Solana's historical
+  // fee-treasury balance, never the shared operational wallets below.
   feeTreasury: WalletBalance[];
-  // What pays out sends and needs to stay funded — real incident this
-  // session: the Solana treasury ran low on SOL and new wallet creation
-  // started failing (SolanaTreasuryLiquidityError) with no visibility
-  // into it until a user reported the error. This is the dashboard's
-  // early-warning view into that same class of problem.
+  // What pays out sends and needs to stay funded — an early-warning view
+  // into liquidity running low before a user hits the error.
   operational: WalletBalance[];
   // What we owe users, in total, per token, per chain — "operational" only
   // means something read next to this. A chain/token combination where
@@ -242,7 +223,6 @@ export async function getTreasurySnapshot(): Promise<TreasurySnapshot> {
         evmTokensOnly(chain, env.remittanceTreasuryAddress as `0x${string}`),
       ),
     ),
-    safeBalance("stellar", env.stellarTreasuryFeeAddress ?? null, () => stellarBalance(env.stellarTreasuryFeeAddress!, false)),
     safeBalance("solana", env.solanaTreasuryFeeAddress ?? null, () => solanaBalance(env.solanaTreasuryFeeAddress!, false)),
   ]);
 
@@ -255,20 +235,13 @@ export async function getTreasurySnapshot(): Promise<TreasurySnapshot> {
     }
   }
 
-  let solanaTreasuryAddress: string | null = null;
-  try {
-    solanaTreasuryAddress = (await getSolanaTreasurySigner()).address;
-  } catch {
-    solanaTreasuryAddress = null;
-  }
-
-  const operational = await Promise.all([
-    ...evmChains.map((chain) =>
-      safeBalance(chain, evmPayoutAddress, () => evmWithNative(chain, evmPayoutAddress!, nativeSymbolFor(chain))),
-    ),
-    safeBalance("stellar", env.stellarDepositAddress ?? null, () => stellarBalance(env.stellarDepositAddress!, true)),
-    safeBalance("solana", solanaTreasuryAddress, () => solanaBalance(solanaTreasuryAddress!, true)),
-  ]);
+  // Solana has no operational (payout-signing) wallet anymore — it's
+  // destination-only for cross-chain sends now, delivered by LI.FI's own
+  // relayer, never signed by us. Only the read-only fee-treasury balance
+  // above still applies.
+  const operational = await Promise.all(
+    evmChains.map((chain) => safeBalance(chain, evmPayoutAddress, () => evmWithNative(chain, evmPayoutAddress!, nativeSymbolFor(chain)))),
+  );
 
   const liabilityEntries = await Promise.all(
     LEDGER_TOKENS.map(async (token) => [token, await ledgerRepo.getTotalAvailableByChain(token)] as const),

@@ -15,8 +15,6 @@ import { computeCrossChainSendFeeSplit, requireTreasuryAddress } from "../offram
 import { readTokenBalance, sweepWallet } from "../wallets/depositSweeper.js";
 import { getWalletAddress } from "../wallets/awsKmsAdapter.js";
 import { getTokenConfig } from "../wallets/chains.js";
-import { getSolanaMint, readSolanaTreasuryBalance, SOLANA_TOKEN_DECIMALS } from "../wallets/solanaAdapter.js";
-import { sweepWallet as sweepSolanaWallet } from "../wallets/solanaDepositSweeper.js";
 import { getBridgeAdapter } from "./bridge/index.js";
 import { crossChainSendsRepo } from "./repository.js";
 import { sanitizeForDb } from "../../utils/format.js";
@@ -60,6 +58,16 @@ export async function initiateCrossChainSend(userId: string, input: InitiateCros
     throw new Error("Source and destination chain are the same — use a regular crypto withdrawal instead.");
   }
 
+  // Celo is the only chain this codebase holds a real balance on (Agents
+  // at Work hackathon narrowing) — enforced explicitly here rather than
+  // just relying on there being no balance to debit elsewhere, since
+  // getBridgeAdapter/liFiAdapter.ts no longer have a non-Celo-source code
+  // path to fall into at all. A stale client sending a different
+  // sourceChain gets a clear error instead of an obscure failure deeper in.
+  if (input.sourceChain.toLowerCase() !== "celo") {
+    throw new Error(`Cross-chain send only supports Celo as the source chain (got "${input.sourceChain}").`);
+  }
+
   // Checked against the gross amount, before any fee split — see
   // env.ts's own comment on why this is a separate, higher floor than
   // computeCrossChainSendFeeSplit's min-fee check below (that one only
@@ -77,18 +85,16 @@ export async function initiateCrossChainSend(userId: string, input: InitiateCros
     throw new Error(`"${input.toAddress}" is not a valid address for ${input.destinationChain}`);
   }
 
-  // Throws a clear "not supported yet" error for Celo (no CCTP domain)
-  // or Solana/Stellar (CCTP domain exists, EVM-only signing built so
-  // far) before any balance is touched — see bridge/index.ts.
+  // Throws a clear "not supported yet" error for a destination LI.FI
+  // doesn't route to (see liFiAdapter.ts's own SUPPORTED_CHAINS) before any
+  // balance is touched.
   const bridge = getBridgeAdapter(input.sourceChain, input.destinationChain);
   if (!bridge.supports(input.sourceChain, input.destinationChain)) {
     throw new Error(`Cross-chain send from ${input.sourceChain} to ${input.destinationChain} isn't supported yet.`);
   }
 
   const tokenSymbol = input.tokenSymbol ?? env.defaultTokenSymbol;
-  if (["celo", "base"].includes(input.sourceChain.toLowerCase())) {
-    getTokenConfig(input.sourceChain, tokenSymbol);
-  }
+  getTokenConfig(input.sourceChain, tokenSymbol);
 
   const walletChainKey = walletChainKeyFor(input.sourceChain);
   const wallet = await walletsRepo.findByUserIdAndChain(userId, walletChainKey);
@@ -144,7 +150,7 @@ export async function initiateCrossChainSend(userId: string, input: InitiateCros
   // from, same liquidity concern a same-chain withdrawal has. Does
   // nothing for a shortfall bigger than this one user's own deposit —
   // correctly not this function's job.
-  if (wallet.provider === "aws-kms" && ["celo", "base"].includes(input.sourceChain) && env.awsKmsPayoutKeyArn) {
+  if (wallet.provider === "aws-kms" && env.awsKmsPayoutKeyArn) {
     try {
       const payoutAddress = await getWalletAddress(env.awsKmsPayoutKeyArn);
       const { decimals: tokenDecimals } = getTokenConfig(input.sourceChain, tokenSymbol);
@@ -164,40 +170,6 @@ export async function initiateCrossChainSend(userId: string, input: InitiateCros
           for (let attempt = 0; attempt < 10; attempt++) {
             await new Promise((resolve) => setTimeout(resolve, 3_000));
             const updatedBalance = await readTokenBalance(input.sourceChain, tokenSymbol, payoutAddress);
-            if (updatedBalance >= needed) break;
-          }
-        }
-      }
-    } catch (err) {
-      // Best-effort — falls through to the bridge attempt below, which
-      // surfaces its own accurate liquidity error if the sweep didn't help.
-      console.error(`[cross-chain-send] just-in-time sweep check failed for send ${send.id}:`, err);
-    }
-  }
-
-  // Same just-in-time backstop, Solana side — a Solana-source cross-chain
-  // send spends from the treasury's own ATA (see solanaAdapter.ts's
-  // withdraw() and solanaDepositSweeper.ts's sweepWallet, both
-  // treasury-funded), not a KMS payout wallet, so this checks the
-  // treasury's balance and sweeps this user's own Solana deposit wallet
-  // into it if short — mirrors the EVM block above exactly in shape.
-  if (input.sourceChain.toLowerCase() === "solana") {
-    try {
-      const mint = getSolanaMint(tokenSymbol);
-      const needed = parseUnits(input.amount, SOLANA_TOKEN_DECIMALS);
-      const treasuryBalance = await readSolanaTreasuryBalance(tokenSymbol);
-      if (treasuryBalance < needed) {
-        console.log(
-          `[cross-chain-send] treasury short on Solana ${tokenSymbol} for send ${send.id} (have ${treasuryBalance}, need ${needed}) — attempting just-in-time sweep of ${wallet.address}`,
-        );
-        const swept = await sweepSolanaWallet(
-          { address: wallet.address, externalWalletId: wallet.externalWalletId },
-          mint,
-        );
-        if (swept) {
-          for (let attempt = 0; attempt < 10; attempt++) {
-            await new Promise((resolve) => setTimeout(resolve, 3_000));
-            const updatedBalance = await readSolanaTreasuryBalance(tokenSymbol);
             if (updatedBalance >= needed) break;
           }
         }

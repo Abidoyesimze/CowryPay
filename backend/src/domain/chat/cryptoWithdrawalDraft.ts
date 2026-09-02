@@ -1,17 +1,12 @@
-import { StrKey } from "@stellar/stellar-sdk";
-import { isAddress as isEvmAddress } from "viem";
-import { isAddress as isSolanaAddress } from "@solana/kit";
 import { walletsRepo } from "../wallets/repository.js";
 import { ledgerRepo } from "../ledger/repository.js";
 import { isValidAddressForChain } from "../cryptoWithdrawals/addressValidation.js";
 import { walletChainKeyFor } from "../cryptoWithdrawals/service.js";
 import { computeCryptoWithdrawalFeeSplit } from "../offramp/fee.js";
-import { SUPPORTED_CHAINS as EVM_CHAINS, getTokenConfig } from "../wallets/chains.js";
+import { getTokenConfig } from "../wallets/chains.js";
 import { env } from "../../config/env.js";
 import { formatAmount } from "../../utils/format.js";
 import type { ParsedIntent } from "./schemas.js";
-
-const ALL_WITHDRAW_CHAINS = [...EVM_CHAINS.filter((c) => c !== "mock-chain"), "stellar", "solana"];
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -56,17 +51,6 @@ export function mergeCryptoWithdrawalDrafts(
   };
 }
 
-// Stellar and Solana addresses have unambiguous, non-overlapping formats,
-// so a bare address alone is enough to know the chain without asking.
-// EVM addresses (0x...) are genuinely ambiguous among Celo/Base/Optimism —
-// the same address is valid on all three, so the chain has to come from
-// the user, never guessed.
-function inferChainFromAddress(address: string): string | null {
-  if (StrKey.isValidEd25519PublicKey(address)) return "stellar";
-  if (!isEvmAddress(address) && isSolanaAddress(address)) return "solana";
-  return null;
-}
-
 // The one thing this must never do is trust a parsed address as final —
 // see schemas.ts's own comment on why. This only ever produces a DRAFT:
 // the frontend shows it back to the user (full address, on-screen, not
@@ -95,20 +79,16 @@ export async function resolveCryptoWithdrawalIntent(
     return { ok: false, message: "What's the destination wallet address?" };
   }
 
-  let chain = intent.chainHint?.toLowerCase();
-  if (chain && !ALL_WITHDRAW_CHAINS.includes(chain)) {
+  // Celo is the only same-chain withdrawal destination now (Agents at Work
+  // hackathon narrowing) — no chain question needed, and no other chain to
+  // infer from the address format. A hint naming something else gets
+  // pointed at cross-chain send instead, which is what Base/Optimism/
+  // Solana destinations actually go through now.
+  const chain = "celo";
+  if (intent.chainHint && intent.chainHint.toLowerCase() !== "celo") {
     return {
       ok: false,
-      message: `"${intent.chainHint}" isn't a chain I recognize. Which one: ${ALL_WITHDRAW_CHAINS.map(capitalize).join(", ")}?`,
-    };
-  }
-  if (!chain) {
-    chain = inferChainFromAddress(intent.toAddress) ?? undefined;
-  }
-  if (!chain) {
-    return {
-      ok: false,
-      message: `Which chain is that address on — Celo, Base, or Optimism? (I can tell Stellar and Solana addresses apart automatically, but those three all use the same address format.)`,
+      message: `Withdrawals only send from Celo. To reach ${capitalize(intent.chainHint)}, start a cross-chain send instead.`,
     };
   }
 
@@ -121,12 +101,10 @@ export async function resolveCryptoWithdrawalIntent(
 
   // Omitted means USDC, the only token that existed before USDT support.
   const tokenSymbol = intent.tokenHint?.toUpperCase() ?? env.defaultTokenSymbol;
-  if (EVM_CHAINS.includes(chain)) {
-    try {
-      getTokenConfig(chain, tokenSymbol);
-    } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
-    }
+  try {
+    getTokenConfig(chain, tokenSymbol);
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
 
   const wallet = await walletsRepo.findByUserIdAndChain(userId, walletChainKeyFor(chain));

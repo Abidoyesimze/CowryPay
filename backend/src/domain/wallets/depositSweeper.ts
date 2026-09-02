@@ -3,7 +3,7 @@ import { env } from "../../config/env.js";
 import { walletsRepo } from "./repository.js";
 import { kmsAccountFromKey, getWalletAddress } from "./awsKmsAdapter.js";
 import { getReceiptStatus } from "./receiptStatus.js";
-import { getChainConfig, getTokenConfig, SUPPORTED_CHAINS, MIN_SWEEP_TOKEN_AMOUNT } from "./chains.js";
+import { getChainConfig, getTokenConfig, DEPOSIT_CHAINS, MIN_SWEEP_TOKEN_AMOUNT } from "./chains.js";
 import { claimNonce, resyncNonce, isNonceError, fetchPendingNonce } from "./evmNonce.js";
 import { withAdvisoryLock } from "../../db/advisoryLock.js";
 
@@ -167,7 +167,7 @@ export async function sweepDeposits(): Promise<void> {
   const payoutAddress = await getWalletAddress(payoutKeyArn);
   const payout: SweepablePayout = { keyArn: payoutKeyArn, address: payoutAddress };
 
-  for (const chain of SUPPORTED_CHAINS) {
+  for (const chain of DEPOSIT_CHAINS) {
     const tokenSymbols = Object.keys(getChainConfig(chain).tokens);
     for (const wallet of wallets) {
       for (const tokenSymbol of tokenSymbols) {

@@ -70,26 +70,6 @@ export function getMe(): Promise<{ user: PublicUser; wallet: Wallet; balances: L
   return authedFetch("/me");
 }
 
-/**
- * Solana deposit address — a dedicated per-user on-chain address, unlike
- * the shared EVM one. Auto-provisioned in the background at signup, but
- * idempotent, so this is a safe on-demand fallback if that hasn't finished
- * yet (or failed).
- */
-export function getSolanaWallet(): Promise<{ address: string }> {
-  return authedFetch("/wallets/solana");
-}
-
-/**
- * Stellar deposit address — shared across every user; `memo` is what
- * actually identifies this user's deposits and MUST be included, or the
- * deposit can't be credited automatically. Provisioned synchronously at
- * signup, but idempotent, so also safe to call on demand.
- */
-export function getStellarWallet(): Promise<{ address: string; memo: string }> {
-  return authedFetch("/wallets/stellar");
-}
-
 /** Deterministic welcome text — call once right after auth. No longer includes an address (see /wallets/* and the chat deposit-chain flow). */
 export function getChatWelcome(): Promise<{ reply: string }> {
   return authedFetch("/chat/welcome");
@@ -417,7 +397,7 @@ export function initiateCryptoWithdrawal(input: {
   amount:      string;
   toAddress:   string;
   pin:         string;
-  /** Omit for USDC — only Celo and Solana support anything else right now. */
+  /** Omit for USDC. Withdrawals only support Celo now. */
   tokenSymbol?: string;
 }): Promise<{ withdrawal: CryptoWithdrawal }> {
   return authedFetch("/crypto-withdrawals", { method: "POST", body: JSON.stringify(input) });
@@ -482,11 +462,10 @@ export type CrossChainSendTransition = {
 };
 
 /**
- * Bridges a balance from one chain to a different one, to any address —
- * CCTP for Base/Optimism/Solana pairs, LI.FI for anything touching Celo.
- * Chat can build a draft (see CrossChainSendDraft) but never calls this
- * itself, same §9 boundary as initiateCryptoWithdrawal. The PIN is
- * verified server-side inside this call.
+ * Bridges a Celo balance (the only source now) out to Base, Optimism, or
+ * Solana, via LI.FI. Chat can build a draft (see CrossChainSendDraft) but
+ * never calls this itself, same §9 boundary as initiateCryptoWithdrawal.
+ * The PIN is verified server-side inside this call.
  */
 export function initiateCrossChainSend(input: {
   sourceChain:      string;

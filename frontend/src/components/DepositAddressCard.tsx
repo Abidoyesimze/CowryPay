@@ -2,20 +2,11 @@
 import { useState } from "react";
 import { QrCode } from "./QrCode";
 
-// Mirrors the backend's DEPOSIT_CHAINS (ai-agent/chat/intent.ts) — which
-// chains are actually offered as a deposit destination, not the broader
-// SUPPORTED_CHAINS registry (Optimism dropped 2026-08: no off-ramp
-// provider settles sends there in practice, so depositing there would
-// strand funds).
-const SELF_CUSTODY_CHAINS = ["Celo", "Base"];
-
 type Props = {
-  address:     string;
-  chain:       string;
-  /** True for a self-custody (aws-kms) wallet — this address isn't limited to `chain`. */
-  multiChain?: boolean;
-  /** Explanatory text under the address — which token(s)/chain(s) this address actually accepts. */
-  note?:       string;
+  address: string;
+  chain:   string;
+  /** Explanatory text under the address — which token(s) this address actually accepts. */
+  note?:   string;
 };
 
 function CopyIcon() {
@@ -35,7 +26,7 @@ function CheckIcon() {
   );
 }
 
-export function DepositAddressCard({ address, chain, multiChain, note }: Props) {
+export function DepositAddressCard({ address, chain, note }: Props) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -52,22 +43,9 @@ export function DepositAddressCard({ address, chain, multiChain, note }: Props) 
     <div className="w-full bg-cowry-card border border-cowry-green/30 rounded-[22px] px-4 py-3">
       <div className="flex items-center justify-between mb-1.5 gap-2">
         <span className="text-xs text-cowry-muted flex-shrink-0">Deposit address</span>
-        {multiChain ? (
-          <div className="flex items-center gap-1 flex-wrap justify-end">
-            {SELF_CUSTODY_CHAINS.map((c) => (
-              <span
-                key={c}
-                className="text-[10px] font-semibold uppercase tracking-wide text-cowry-green bg-cowry-green/10 border border-cowry-green/30 rounded-full px-2 py-0.5"
-              >
-                {c}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-cowry-green bg-cowry-green/10 border border-cowry-green/30 rounded-full px-2 py-0.5">
-            {chain}
-          </span>
-        )}
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-cowry-green bg-cowry-green/10 border border-cowry-green/30 rounded-full px-2 py-0.5">
+          {chain}
+        </span>
       </div>
       <div className="my-3">
         <QrCode value={address} />

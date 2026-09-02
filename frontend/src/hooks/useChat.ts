@@ -24,10 +24,9 @@ function newSessionId(): string {
 /** Clear server pending state after this long without a user message. */
 const IDLE_RESET_MS = 20 * 60 * 1000;
 
-// Mirrors the backend's DEPOSIT_INTENT_RE + ADDRESS_RE + CHAIN_NAME_RE (ai-agent/chat/intent.ts).
+// Mirrors the backend's DEPOSIT_INTENT_RE + ADDRESS_RE (ai-agent/chat/intent.ts).
 const DEPOSIT_INTENT_RE = /\b(deposit|top ?up|fund my (wallet|account)|add (money|funds|usdc))\b/i;
 const ADDRESS_RE = /\b(deposit address|wallet address|my address|my wallet)\b/i;
-const CHAIN_NAME_RE = /\b(celo|base|optimism|stellar|solana)\b/i;
 
 export function useChat(user: PublicUser | null, onDepositIntent?: (chain: string | null) => void) {
   const [messages,  setMessages]  = useState<Message[]>([]);
@@ -259,11 +258,10 @@ export function useChat(user: PublicUser | null, onDepositIntent?: (chain: strin
 
       // Deposit/address requests are handled entirely client-side — see
       // DEPOSIT_INTENT_RE/ADDRESS_RE above for why this never reaches /chat.
+      // Celo-only now, so there's no chain to disambiguate.
       if (DEPOSIT_INTENT_RE.test(text) || ADDRESS_RE.test(text)) {
-        const chainMatch = text.match(CHAIN_NAME_RE);
-        const chain = chainMatch ? chainMatch[1].toLowerCase() : null;
-        addMessage({ role: "bot", text: chain ? "Here you go 👇" : "Sure — pick a chain below 👇" });
-        onDepositIntent?.(chain);
+        addMessage({ role: "bot", text: "Here you go 👇" });
+        onDepositIntent?.("celo");
         return;
       }
 
@@ -618,7 +616,7 @@ export function useChat(user: PublicUser | null, onDepositIntent?: (chain: strin
   );
 
   const addBotMessage = useCallback(
-    (text: string, extra?: Partial<Pick<Message, "depositAddress" | "depositChain" | "depositMultiChain">>) => {
+    (text: string, extra?: Partial<Pick<Message, "depositAddress" | "depositChain">>) => {
       addMessage({ role: "bot", text, ...extra });
     },
     [addMessage],

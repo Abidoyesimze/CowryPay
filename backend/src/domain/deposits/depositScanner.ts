@@ -2,7 +2,7 @@ import { createPublicClient, http, parseAbiItem, formatUnits } from "viem";
 import { env } from "../../config/env.js";
 import { chainScanCursorRepo } from "../../db/chainScanCursorRepository.js";
 import { walletsRepo } from "../wallets/repository.js";
-import { getChainConfig, SUPPORTED_CHAINS } from "../wallets/chains.js";
+import { getChainConfig, DEPOSIT_CHAINS } from "../wallets/chains.js";
 import type { Wallet } from "../../types.js";
 import { ingestDeposit } from "./stateMachine.js";
 
@@ -113,7 +113,7 @@ export async function scanForDeposits(): Promise<void> {
   const wallets = await walletsRepo.listByProvider("aws-kms");
   if (wallets.length === 0) return;
 
-  for (const chain of SUPPORTED_CHAINS) {
+  for (const chain of DEPOSIT_CHAINS) {
     try {
       await scanChain(chain, wallets);
     } catch (err) {

@@ -1,14 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import {
-  getSend,
-  getSendReceipt,
-  getSolanaWallet,
-  getStellarWallet,
-  type Send,
-  type SendReceipt,
-  type Wallet,
-} from "@/lib/backendApi";
+import { getSend, getSendReceipt, type Send, type SendReceipt, type Wallet } from "@/lib/backendApi";
 import { describeSendState } from "@/lib/txState";
 import { explorerUrlFor } from "@/lib/explorer";
 import { formatFiat, formatToken } from "@/lib/currency";
@@ -85,24 +77,12 @@ export function ReceiptModal({ sendId, wallet, onClose }: Props) {
     };
   }, [sendId]);
 
+  // Remittances only settle from Celo now — always the wallet already
+  // loaded, no separate fetch needed (unlike when Solana/Stellar had their
+  // own dedicated wallet rows).
   useEffect(() => {
     if (!receipt) return;
-    const chain = receipt.chain.toLowerCase();
-    if (chain === "celo" || chain === "base" || chain === "optimism") {
-      setSenderAddress(wallet.address);
-      return;
-    }
-    const fetcher = chain === "solana" ? getSolanaWallet : chain === "stellar" ? getStellarWallet : null;
-    if (!fetcher) return;
-    let cancelled = false;
-    fetcher()
-      .then((w) => {
-        if (!cancelled) setSenderAddress(w.address);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    setSenderAddress(wallet.address);
   }, [receipt, wallet.address]);
 
   const state = send?.state;

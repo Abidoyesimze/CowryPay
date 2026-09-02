@@ -63,8 +63,7 @@ export function MessageBubble({
           <DepositAddressCard
             address={message.depositAddress}
             chain={message.depositChain ?? "Celo"}
-            multiChain={message.depositMultiChain}
-            note={message.depositMultiChain ? "Send USDC on any of the chains above, or USDT on Celo, to this same address." : undefined}
+            note="Send USDC or USDT on Celo to this same address."
           />
         )}
 

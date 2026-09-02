@@ -2,20 +2,15 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { adminRepo } from "../domain/admin/repository.js";
 import { requireAdminKey, requireMetricsKey } from "../middleware/requireAdminKey.js";
-import { unmatchedStellarDepositsRepo } from "../domain/deposits/unmatchedStellarDepositsRepository.js";
 import { walletsRepo } from "../domain/wallets/repository.js";
 import { ingestDeposit } from "../domain/deposits/stateMachine.js";
 import { sendsRepo } from "../domain/offramp/repository.js";
 import { withTransaction } from "../db/pool.js";
 import type { SendState } from "../types.js";
-import { stellarWalletAdapter } from "../domain/wallets/stellarAdapter.js";
-import { solanaWalletAdapter } from "../domain/wallets/solanaAdapter.js";
 import { sendNativeToken } from "../domain/wallets/awsKmsAdapter.js";
 import { getTreasurySnapshot } from "../domain/admin/treasury.js";
-import { diagnoseStellarDeposits } from "../domain/admin/stellarDepositDiagnostic.js";
 import { ledgerRepo } from "../domain/ledger/repository.js";
 import { depositsRepo } from "../domain/deposits/repository.js";
-import { reconcileSolanaWebhookAddresses } from "../domain/monitoring/solanaWebhookReconciler.js";
 import { crossChainSendsRepo } from "../domain/crossChainSend/repository.js";
 
 export const adminRouter = Router();
@@ -86,78 +81,6 @@ adminRouter.get("/admin/sends", async (req: Request, res: Response) => {
   const limit = Math.min(Number(req.query.limit) || 20, 100);
   const sends = await adminRepo.listRecentSends(chain, limit);
   res.json({ sends });
-});
-
-// A memo-less/unrecognized Stellar deposit was never actually
-// unrecoverable — stellarDepositScanner.ts already tracks it in
-// unmatched_stellar_deposits, this just exposes that table instead of
-// requiring a direct DB query every time a user reports a missing
-// deposit.
-adminRouter.get("/admin/stellar/unmatched-deposits", async (req: Request, res: Response) => {
-  if (!requireAdminKey(req, res)) return;
-  const deposits = await unmatchedStellarDepositsRepo.listUnresolved();
-  res.json({ deposits });
-});
-
-// Walks Horizon's own payment history directly (ground truth) and
-// cross-checks each USDC payment against both the deposits table
-// (credited) and unmatched_stellar_deposits (flagged) — surfaces anything
-// in neither, which the unmatched-deposits list alone can't catch (e.g. a
-// silent failure in ingestDeposit itself, or a scanner cursor stuck behind
-// where it should be). See stellarDepositDiagnostic.ts for why this exists.
-adminRouter.get("/admin/stellar/deposit-diagnostic", async (req: Request, res: Response) => {
-  if (!requireAdminKey(req, res)) return;
-  const lookback = Math.min(Number(req.query.lookback) || 100, 500);
-  const result = await diagnoseStellarDeposits(lookback);
-  res.json(result);
-});
-
-const ResolveUnmatchedDepositSchema = z.object({
-  userId: z.string().min(1),
-  actor: z.string().min(1),
-});
-
-// Replays the deposit through the exact same ingestDeposit path a
-// correctly-memo'd payment already goes through (see
-// stellarDepositScanner.ts's matched branch) — not a separate, one-off
-// ledger credit — so it goes through the normal DEPOSIT_DETECTED state
-// machine and is safe/idempotent if ever called twice (ingestDeposit's
-// own (chain, tx_hash) uniqueness).
-adminRouter.post("/admin/stellar/unmatched-deposits/:id/resolve", async (req: Request, res: Response) => {
-  if (!requireAdminKey(req, res)) return;
-  const parsed = ResolveUnmatchedDepositSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid request" });
-    return;
-  }
-
-  const deposit = await unmatchedStellarDepositsRepo.findById(req.params.id);
-  if (!deposit) {
-    res.status(404).json({ error: "not found" });
-    return;
-  }
-  if (deposit.resolvedAt) {
-    res.status(400).json({ error: "already resolved" });
-    return;
-  }
-
-  const wallet = await walletsRepo.findByUserIdAndChain(parsed.data.userId, "stellar");
-  if (!wallet) {
-    res.status(400).json({ error: "that user has no Stellar wallet on record" });
-    return;
-  }
-
-  await ingestDeposit({
-    userId: parsed.data.userId,
-    walletId: wallet.id,
-    tokenSymbol: "USDC",
-    amount: deposit.amount,
-    chain: "stellar",
-    txHash: deposit.txHash,
-  });
-  await unmatchedStellarDepositsRepo.markResolved(deposit.id, parsed.data.actor);
-
-  res.json({ ok: true });
 });
 
 const CorrectSendStateSchema = z.object({
@@ -314,82 +237,6 @@ adminRouter.post("/admin/sends/:id/correct-state", async (req: Request, res: Res
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-const StellarTreasuryTransferSchema = z.object({
-  toAddress: z.string().min(1),
-  amount: z.string().min(1),
-  reference: z.string().min(1),
-});
-
-// One-off ops tool for moving funds between our own Stellar-controlled
-// wallets (e.g. sweeping a recovered provider refund from the Centiiv-
-// registered refund address into the platform fee treasury) — reuses
-// stellarWalletAdapter.withdraw() rather than a standalone script so the
-// transaction goes through the SAME in-process serialize() queue as every
-// other live withdraw off this shared omnibus account. A script running
-// outside the server process would read the account's sequence number
-// independently of that queue and could race real production withdraws
-// happening at the same time (tx_bad_seq for one side or the other) — the
-// exact failure mode serialize() exists to prevent.
-adminRouter.post("/admin/stellar/treasury-transfer", async (req: Request, res: Response) => {
-  if (!requireAdminKey(req, res)) return;
-  const parsed = StellarTreasuryTransferSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid request" });
-    return;
-  }
-
-  try {
-    const result = await stellarWalletAdapter.withdraw({
-      chain: "stellar",
-      tokenSymbol: "USDC",
-      toAddress: parsed.data.toAddress,
-      amount: parsed.data.amount,
-      reference: parsed.data.reference,
-    });
-    res.json({ ok: true, txHash: result.txHash, status: result.status });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-const SolanaTreasuryTransferSchema = z.object({
-  toAddress: z.string().min(1),
-  amount: z.string().min(1),
-  reference: z.string().min(1),
-  tokenSymbol: z.string().min(1).default("USDC"),
-});
-
-// Solana equivalent of /admin/stellar/treasury-transfer above — same
-// one-off ops need (e.g. sweeping a send's fee_amount to the fee treasury
-// after the confirmation-wait bug fixed in 99db41f left it unswept, since
-// that crash happened before the normal fee-sweep step in
-// offramp/service.ts ever ran). Goes through solanaWalletAdapter.withdraw
-// rather than a standalone script for the same reason as the Stellar
-// version: the treasury signer's real balance/ATA state should only ever
-// be touched via the app's own adapter, not a script racing it outside
-// the process.
-adminRouter.post("/admin/solana/treasury-transfer", async (req: Request, res: Response) => {
-  if (!requireAdminKey(req, res)) return;
-  const parsed = SolanaTreasuryTransferSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid request" });
-    return;
-  }
-
-  try {
-    const result = await solanaWalletAdapter.withdraw({
-      chain: "solana",
-      tokenSymbol: parsed.data.tokenSymbol,
-      toAddress: parsed.data.toAddress,
-      amount: parsed.data.amount,
-      reference: parsed.data.reference,
-    });
-    res.json({ ok: true, txHash: result.txHash, status: result.status });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -597,20 +444,6 @@ adminRouter.post("/admin/users/:userId/adjust-ledger", async (req: Request, res:
     res.json({ ok: true, balance });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-// Manual trigger for the periodic reconciler (see solanaWebhookReconciler.ts)
-// — lets a fix land immediately instead of waiting up to 10 minutes for the
-// next scheduled cycle, e.g. right after a deploy meant to backfill
-// addresses missed by the per-wallet-creation registration's own race.
-adminRouter.post("/admin/solana/reconcile-webhook", async (req: Request, res: Response) => {
-  if (!requireAdminKey(req, res)) return;
-  try {
-    await reconcileSolanaWebhookAddresses();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 

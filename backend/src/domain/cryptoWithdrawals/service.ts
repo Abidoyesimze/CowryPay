@@ -29,17 +29,14 @@ export interface InitiateCryptoWithdrawalInput {
   tokenSymbol?: string;
 }
 
-// Which wallet ROW this withdrawal dispatches through — mirrors
-// offramp/service.ts's own walletChainKey logic, but fixed to handle
-// Solana explicitly rather than silently falling through to the EVM
-// default the way that code's own comment admits it does today. EVM
-// chains (celo/base/optimism) share one wallet row keyed under
-// env.defaultChain (one KMS/Blockradar address valid on all three); Stellar
-// and Solana each have their own dedicated row.
+// Which wallet ROW this withdrawal dispatches through. Celo is the only
+// same-chain withdrawal destination now (Agents at Work hackathon
+// narrowing) — the Stellar/Solana dedicated-row special-casing this used
+// to need is gone along with those chains as withdrawal destinations
+// (Solana survives only as a cross-chain-send DESTINATION, which never
+// calls this).
 export function walletChainKeyFor(chain: string): string {
-  const c = chain.toLowerCase();
-  if (c === "stellar") return "stellar";
-  if (c === "solana") return "solana";
+  void chain;
   return env.defaultChain;
 }
 
@@ -78,6 +75,14 @@ export async function initiateCryptoWithdrawal(
     );
   }
 
+  // Celo is the only same-chain withdrawal source/destination now (Agents
+  // at Work hackathon narrowing) — Base/Optimism/Solana are reachable only
+  // via cross-chain send (crossChainSend/service.ts), which has its own
+  // explicit sourceChain guard mirroring this one.
+  if (input.chain.toLowerCase() !== "celo") {
+    throw new Error(`Withdrawals only support Celo (got "${input.chain}") — use a cross-chain send to reach another chain.`);
+  }
+
   // A wrong-format destination here is unrecoverable money loss, not a
   // retryable error — validated before any balance is touched.
   if (!isValidAddressForChain(input.chain, input.toAddress)) {
@@ -85,13 +90,7 @@ export async function initiateCryptoWithdrawal(
   }
 
   const tokenSymbol = input.tokenSymbol ?? env.defaultTokenSymbol;
-  // Stellar/Solana validate their own token support inside the adapter;
-  // EVM chains are validated here up front via chains.ts's token map (e.g.
-  // USDT on Base) so an unsupported pairing fails clean, before any balance
-  // is touched, rather than surfacing later as an opaque adapter error.
-  if (EVM_CHAINS.includes(input.chain.toLowerCase())) {
-    getTokenConfig(input.chain, tokenSymbol);
-  }
+  getTokenConfig(input.chain, tokenSymbol);
 
   const walletChainKey = walletChainKeyFor(input.chain);
   const wallet = await walletsRepo.findByUserIdAndChain(userId, walletChainKey);

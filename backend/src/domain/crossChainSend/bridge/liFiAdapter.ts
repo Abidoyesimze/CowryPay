@@ -1,51 +1,48 @@
 import { createClient, getQuote, getStepTransaction, getStatus } from "@lifi/sdk";
 import type { SDKClient, LiFiStep } from "@lifi/sdk";
 import { encodeFunctionData, parseUnits } from "viem";
-import { createSolanaRpc, getTransactionDecoder, sendTransactionWithoutConfirmingFactory } from "@solana/kit";
-import { signTransactionWithSigners, getSignatureFromTransaction } from "@solana/kit";
 import { env } from "../../../config/env.js";
 import { getChainConfig, getTokenConfig } from "../../wallets/chains.js";
 import { getWalletAddress } from "../../wallets/awsKmsAdapter.js";
 import { getSolanaMint, SOLANA_TOKEN_DECIMALS } from "../../wallets/solanaAdapter.js";
-import { getSolanaTreasurySigner } from "../../wallets/solanaKms.js";
 import { sendRawEvmTx } from "./evmRawTx.js";
 import type { BridgeAdapter, BridgeInitiateInput, BridgeInitiateResult, BridgePhaseCheckResult, BridgeQuote } from "./adapter.js";
 
 // Celo has no native CCTP support at all — confirmed against both
 // Circle's official docs AND Circle's own SDK internals (its Celo chain
-// definition exists but cctp is explicitly null, 2026-08-19). This
-// adapter routes any Celo-touching leg through LI.FI instead, an
-// aggregator that composes whichever underlying bridge + DEX swap gets
-// the recipient the REAL requested token — unlike Wormhole's own transfer
-// mechanisms (Wrapped Token Transfer, Native Token Transfers), which both
-// mint a new, non-canonical token contract on the destination that this
-// codebase's ledger/balance code wouldn't recognize. Confirmed live
-// (li.quest/v1/tokens) that LI.FI's own token registry already has the
-// exact canonical USDC addresses this codebase uses on Base and Celo.
+// definition exists but cctp is explicitly null, 2026-08-19). Since Celo
+// is now the ONLY source chain this codebase has a real balance on
+// (Agents at Work hackathon narrowing — see crossChainSend/service.ts's
+// own sourceChain guard), every real cross-chain send routes through
+// LI.FI, an aggregator that composes whichever underlying bridge + DEX
+// swap gets the recipient the REAL requested token — unlike Wormhole's
+// own transfer mechanisms (Wrapped Token Transfer, Native Token
+// Transfers), which both mint a new, non-canonical token contract on the
+// destination that this codebase's ledger/balance code wouldn't
+// recognize. Confirmed live (li.quest/v1/tokens) that LI.FI's own token
+// registry already has the exact canonical USDC addresses this codebase
+// uses on Base and Celo.
 //
-// This is a materially different trust model than the native-CCTP legs
-// (Base/Optimism/Solana): a real third party (whichever bridge LI.FI
-// selects) and a swap step are both involved, so unlike CCTP's clean 1:1
-// burn-mint, the amount actually delivered can be slightly less than
-// netAmount (slippage) — accepted, deliberate trade-off for Celo
-// specifically, not something to "fix" by pretending it's 1:1.
+// This is a materially different trust model than a clean CCTP burn-mint
+// would be: a real third party (whichever bridge LI.FI selects) and a
+// swap step are both involved, so the amount actually delivered can be
+// slightly less than netAmount (slippage) — accepted, deliberate
+// trade-off, not something to "fix" by pretending it's 1:1.
 //
-// Also handles Celo<->Solana, since LI.FI is chain-agnostic: confirmed
+// Also handles Celo->Solana, since LI.FI is chain-agnostic: confirmed
 // live (li.quest/v1/chains) Solana's LI.FI chain ID is 1151111081099710.
-// Solana's signing path is genuinely different from EVM's — see
-// initiateSolanaSourceLeg below.
+// Solana is DESTINATION-only here — we never sign a Solana-side
+// transaction ourselves (LI.FI's own relayer delivers funds on that
+// side), so there's no Solana signing path in this file at all.
 const LIFI_CHAIN_IDS: Record<string, number> = { celo: 42220, base: 8453, optimism: 10, solana: 1151111081099710 };
 
 // Which of the chains LI.FI knows about (LIFI_CHAIN_IDS) are actually
-// offered right now — kept separate from LIFI_CHAIN_IDS itself (which
-// stays complete, including optimism, so the rpcUrls map and
-// requireLiFiChainId below don't need touching) mirroring cctpAdapter.ts's
-// own SUPPORTED_CHAINS/getChainDefinition split. Optimism is withheld:
-// deposits on Optimism are on hold (DEPOSIT_CHAINS in
-// ai-agent/chat/intent.ts), so there's no way for a user to hold an
-// Optimism balance to send from yet. Re-enable by adding it back here
-// once Optimism deposits ship.
-const SUPPORTED_CHAINS = new Set(["celo", "base", "solana"]);
+// offered right now as a cross-chain-send DESTINATION. Optimism was
+// previously withheld here because Optimism deposits were on hold — that
+// reasoning no longer applies: destination availability was never gated
+// on having a balance to send FROM, only on having one to send TO, and
+// Celo is the only source now regardless. Re-added.
+const SUPPORTED_CHAINS = new Set(["celo", "base", "optimism", "solana"]);
 
 // Conservative defaults — not yet tuned against real transfers. slippage
 // is fractional (0.005 = 0.5%); maxPriceImpact hides routes worse than
@@ -92,14 +89,9 @@ function requireLiFiChainId(chain: string): number {
   return chainId;
 }
 
-// Token address, decimals, and "who signs on this platform's behalf on
-// this chain" all differ between EVM chains (chains.ts's registry, the
-// KMS payout wallet) and Solana (its own mint registry in
-// solanaAdapter.ts, the Solana treasury signer) — mirrors
-// cctpBridge.ts's own EVM-vs-Solana branching (that file predates this
-// one and has its own small, independent copy of the same split; not
-// unified into one shared module to avoid touching already-verified code
-// for this addition).
+// Token address/decimals still differ between EVM chains (chains.ts's
+// registry) and Solana (its own mint registry in solanaAdapter.ts) even
+// with Solana destination-only — a route's TO side can still be Solana.
 async function tokenAddressFor(chain: string, tokenSymbol: string): Promise<{ address: string; decimals: number }> {
   if (chain.toLowerCase() === "solana") {
     return { address: getSolanaMint(tokenSymbol), decimals: SOLANA_TOKEN_DECIMALS };
@@ -107,13 +99,26 @@ async function tokenAddressFor(chain: string, tokenSymbol: string): Promise<{ ad
   return getTokenConfig(chain, tokenSymbol);
 }
 
-async function signerAddressFor(chain: string): Promise<string> {
-  if (chain.toLowerCase() === "solana") {
-    const signer = await getSolanaTreasurySigner();
-    return signer.address;
-  }
+// The source side is always our own EVM payout wallet now (Celo is the
+// only source chain) — no more Solana-treasury-signer branch here.
+async function sourceSignerAddress(): Promise<string> {
   if (!env.awsKmsPayoutKeyArn) throw new Error("AWS_KMS_PAYOUT_KEY_ARN must be set to bridge via LI.FI");
   return getWalletAddress(env.awsKmsPayoutKeyArn);
+}
+
+// A pure quote (no real send happening yet) has no real recipient to give
+// LI.FI — any syntactically valid address on the destination chain is a
+// safe placeholder, since quotes are priced off amount/route, not the
+// specific recipient. Our own EVM address works for Base/Optimism (same
+// address across every EVM chain); Solana has no equivalent "our own
+// address" anymore (destination-only, no treasury signer), so its System
+// Program address — a fixed, always-valid, unowned Solana account — is
+// used instead purely as a well-formed placeholder.
+const SOLANA_PLACEHOLDER_ADDRESS = "11111111111111111111111111111111";
+
+async function placeholderAddressFor(chain: string): Promise<string> {
+  if (chain.toLowerCase() === "solana") return SOLANA_PLACEHOLDER_ADDRESS;
+  return sourceSignerAddress();
 }
 
 async function requestQuote(input: {
@@ -126,7 +131,7 @@ async function requestQuote(input: {
   const [{ address: fromTokenAddress, decimals }, { address: toTokenAddress }, fromAddress] = await Promise.all([
     tokenAddressFor(input.sourceChain, input.tokenSymbol),
     tokenAddressFor(input.destinationChain, input.tokenSymbol),
-    signerAddressFor(input.sourceChain),
+    sourceSignerAddress(),
   ]);
 
   return getQuote(getLiFiClient(), {
@@ -142,38 +147,6 @@ async function requestQuote(input: {
   });
 }
 
-// Solana's leg of a LI.FI route arrives as a single, fully pre-compiled
-// transaction (confirmed live against the real API, 2026-08-19:
-// transactionRequest.data is a base64 blob, not {to, data, value} the way
-// every EVM step is) — unlike EVM, where our own approve() call precedes
-// a separate step transaction, Solana transactions can bundle multiple
-// instructions (including any delegate/approval) into one atomic
-// transaction, so there's nothing separate to approve here; this is the
-// only signing step for a Solana source leg.
-//
-// Deliberately broadcasts WITHOUT waiting for confirmation (unlike
-// solanaAdapter.ts's own signAndSendTransaction, which blocks synchronously
-// for up to ~90s — a pattern that fits wallet creation but not this
-// feature's broadcast-then-poll architecture). checkStatus below already
-// gets source-confirmation status from LI.FI's own getStatus, chain-
-// agnostically, so there's no need to independently poll Solana's RPC too.
-async function initiateSolanaSourceLeg(step: LiFiStep): Promise<string> {
-  if (!step.transactionRequest?.data) {
-    throw new Error("LI.FI did not return a transaction to sign for this Solana route");
-  }
-  const transactionBytes = Buffer.from(step.transactionRequest.data, "base64");
-  const transaction = getTransactionDecoder().decode(transactionBytes);
-
-  const signer = await getSolanaTreasurySigner();
-  const signedTransaction = await signTransactionWithSigners([signer], transaction);
-  const signature = getSignatureFromTransaction(signedTransaction);
-
-  const rpc = createSolanaRpc(env.solanaRpcUrl);
-  const sendWithoutConfirming = sendTransactionWithoutConfirmingFactory({ rpc });
-  await sendWithoutConfirming(signedTransaction as never, { commitment: "confirmed" });
-  return signature;
-}
-
 export const liFiAdapter: BridgeAdapter = {
   supports(sourceChain: string, destinationChain: string): boolean {
     return SUPPORTED_CHAINS.has(sourceChain.toLowerCase()) && SUPPORTED_CHAINS.has(destinationChain.toLowerCase());
@@ -184,7 +157,7 @@ export const liFiAdapter: BridgeAdapter = {
     // give LI.FI — the platform's own signer address on the destination
     // chain is a safe placeholder; quotes are priced off amount/route,
     // not the specific recipient.
-    const placeholderAddress = await signerAddressFor(input.destinationChain);
+    const placeholderAddress = await placeholderAddressFor(input.destinationChain);
     const step = await requestQuote({ ...input, destinationAddress: placeholderAddress });
     // toAmountMin, not the optimistic toAmount — the guaranteed floor is
     // the honest number to report, given a swap step is involved.
@@ -193,39 +166,36 @@ export const liFiAdapter: BridgeAdapter = {
     return { estimatedSeconds: step.estimate.executionDuration, destinationAmount };
   },
 
+  // Source is always EVM (Celo) now — no more Solana-source signing branch.
+  // crossChainSend/service.ts's own sourceChain==="celo" guard is what
+  // actually enforces this; this function just no longer has a Solana path
+  // to fall into.
   async initiate(input: BridgeInitiateInput): Promise<BridgeInitiateResult> {
     const step = await requestQuote(input);
 
-    let sourceTxHash: string;
-    if (input.sourceChain.toLowerCase() === "solana") {
-      sourceTxHash = await initiateSolanaSourceLeg(step);
-    } else {
-      const { address: fromTokenAddress } = await tokenAddressFor(input.sourceChain, input.tokenSymbol);
-      // Approve LI.FI's selected route to spend the source token, unless
-      // this specific route doesn't need it (estimate.skipApproval) —
-      // same "approve before the real step" shape as cctpBridge.ts's
-      // depositForBurn.
-      if (!step.estimate.skipApproval) {
-        const approveData = encodeFunctionData({
-          abi: ERC20_APPROVE_ABI,
-          functionName: "approve",
-          args: [step.estimate.approvalAddress as `0x${string}`, BigInt(step.action.fromAmount)],
-        });
-        await sendRawEvmTx(input.sourceChain, fromTokenAddress as `0x${string}`, approveData);
-      }
-
-      // getQuote's step doesn't always carry live calldata —
-      // getStepTransaction fetches the actual, current transactionRequest
-      // to sign, same "quote now, fresh tx data at broadcast time"
-      // separation as most aggregators use since prices/calldata can
-      // shift between the two calls.
-      const stepWithTx = await getStepTransaction(getLiFiClient(), step);
-      if (!stepWithTx.transactionRequest?.to || !stepWithTx.transactionRequest.data) {
-        throw new Error("LI.FI did not return a transaction to sign for this route");
-      }
-      const { to, data, value } = stepWithTx.transactionRequest;
-      sourceTxHash = await sendRawEvmTx(input.sourceChain, to as `0x${string}`, data as `0x${string}`, value ? BigInt(value) : 0n);
+    const { address: fromTokenAddress } = await tokenAddressFor(input.sourceChain, input.tokenSymbol);
+    // Approve LI.FI's selected route to spend the source token, unless
+    // this specific route doesn't need it (estimate.skipApproval).
+    if (!step.estimate.skipApproval) {
+      const approveData = encodeFunctionData({
+        abi: ERC20_APPROVE_ABI,
+        functionName: "approve",
+        args: [step.estimate.approvalAddress as `0x${string}`, BigInt(step.action.fromAmount)],
+      });
+      await sendRawEvmTx(input.sourceChain, fromTokenAddress as `0x${string}`, approveData);
     }
+
+    // getQuote's step doesn't always carry live calldata —
+    // getStepTransaction fetches the actual, current transactionRequest
+    // to sign, same "quote now, fresh tx data at broadcast time"
+    // separation as most aggregators use since prices/calldata can
+    // shift between the two calls.
+    const stepWithTx = await getStepTransaction(getLiFiClient(), step);
+    if (!stepWithTx.transactionRequest?.to || !stepWithTx.transactionRequest.data) {
+      throw new Error("LI.FI did not return a transaction to sign for this route");
+    }
+    const { to, data, value } = stepWithTx.transactionRequest;
+    const sourceTxHash = await sendRawEvmTx(input.sourceChain, to as `0x${string}`, data as `0x${string}`, value ? BigInt(value) : 0n);
 
     return {
       sourceTxHash,

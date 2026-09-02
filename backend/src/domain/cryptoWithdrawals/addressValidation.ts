@@ -1,5 +1,4 @@
 import { isAddress as isEvmAddress } from "viem";
-import { StrKey } from "@stellar/stellar-sdk";
 import { isAddress as isSolanaAddress } from "@solana/kit";
 import { SUPPORTED_CHAINS } from "../wallets/chains.js";
 
@@ -9,13 +8,15 @@ import { SUPPORTED_CHAINS } from "../wallets/chains.js";
 // address format, not a generic "looks like a hex string" check, since
 // that's exactly the class of mistake (e.g. an EVM-shaped address entered
 // for a Solana withdrawal) this exists to catch before broadcasting.
+// Shared by same-chain crypto withdrawals (Celo only) AND cross-chain-send
+// destination validation (Celo/Base/Optimism/Solana — see
+// crossChainSend/service.ts) — Solana stays here for that second use even
+// though it's no longer a same-chain withdrawal destination. Stellar was
+// dropped entirely with the Agents at Work Celo-only narrowing.
 export function isValidAddressForChain(chain: string, address: string): boolean {
   const c = chain.toLowerCase();
   if (SUPPORTED_CHAINS.includes(c)) {
     return isEvmAddress(address);
-  }
-  if (c === "stellar") {
-    return StrKey.isValidEd25519PublicKey(address);
   }
   if (c === "solana") {
     return isSolanaAddress(address);

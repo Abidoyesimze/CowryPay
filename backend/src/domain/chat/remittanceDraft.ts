@@ -20,15 +20,8 @@ import {
 } from "../offramp/paycrestAdapter.js";
 import { getInstitutions as getQuidaxInstitutions, createOfframpOrder as createQuidaxOrder } from "../offramp/quidaxAdapter.js";
 import {
-  getInstitutions as getCentiivInstitutions,
-  createOfframpOrder as createCentiivOrder,
-  centiivBeneficiaryTypeFor,
-  centiivMobileMoneyNetworkFor,
-} from "../offramp/centiivAdapter.js";
-import {
   selectOfframpProvider,
   isQuidaxEligible,
-  isCentiivEligible,
   isPaycrestEligible,
   explainNoProviderMessage,
   type OfframpProvider,
@@ -223,11 +216,11 @@ async function finalizeRemittanceDraft(
   // found on its own institution list — recipient.institution above was
   // already resolved as a Paycrest bank code, and each provider's bank
   // codes are a different namespace for the same real-world bank. Reusing
-  // Paycrest's code on a Quidax/Centiiv order (or vice versa) would
-  // silently misroute the payout, so this only switches provider when a
-  // single, unambiguous name match exists on THAT provider's own list;
-  // any other outcome (not eligible, no match, lookup failure) falls
-  // straight back to Paycrest, unchanged from before either existed.
+  // Paycrest's code on a Quidax order (or vice versa) would silently
+  // misroute the payout, so this only switches provider when a single,
+  // unambiguous name match exists on Quidax's own list; any other outcome
+  // (not eligible, no match, lookup failure) falls straight back to
+  // Paycrest, unchanged from before Quidax existed.
   let provider: OfframpProvider = "paycrest";
   // Starts as the original (Paycrest-coded) recipient; only ever replaced
   // with an alt-provider-coded version once a confident single match is
@@ -238,7 +231,7 @@ async function finalizeRemittanceDraft(
   let altRecipient: { institution: string; accountIdentifier: string; accountName: string; network?: string } | null =
     null;
 
-  if (isQuidaxEligible(chain, fiatCurrency) || isCentiivEligible(chain, fiatCurrency)) {
+  if (isQuidaxEligible(chain, fiatCurrency)) {
     try {
       const selection = await selectOfframpProvider({ chain, token: tokenSymbol, amount: netAmount, fiatCurrency });
       console.log(`[remittance-draft] provider selection for ${chain}: ${selection.provider} (toAmount=${selection.toAmount})`);
@@ -262,51 +255,6 @@ async function finalizeRemittanceDraft(
           console.log(
             `[remittance-draft] ${selection.provider} won the rate for ${chain} but institution cross-match found ${matches.length} matches for "${searchTerm}" (need exactly 1) — falling back to paycrest, which isn't eligible for ${chain} either.`,
           );
-        }
-      } else if (selection.provider === "centiiv") {
-        const beneficiaryType = centiivBeneficiaryTypeFor(fiatCurrency);
-        if (beneficiaryType === "BANK") {
-          // NGN — same institution-code cross-match as Quidax above.
-          const altInstitutions = await getCentiivInstitutions();
-          const searchTerm = recipient.institutionName ?? recipient.institution;
-          const matches = findInstitutionMatches(searchTerm, altInstitutions);
-          if (matches.length === 1) {
-            const matched = matches[0]!;
-            provider = selection.provider;
-            finalRecipient = { ...recipient, institution: matched.code, institutionName: matched.name };
-            altRecipient = {
-              institution: matched.code,
-              accountIdentifier: recipient.accountIdentifier,
-              accountName: recipient.accountName,
-            };
-          } else {
-            console.log(
-              `[remittance-draft] centiiv won the rate for ${chain} but institution cross-match found ${matches.length} matches for "${searchTerm}" (need exactly 1) — falling back to paycrest, which isn't eligible for ${chain} either.`,
-            );
-          }
-        } else if (beneficiaryType === "MOBILEMONEY") {
-          // UGX/KES/GHS — there's no institution list to cross-match
-          // against at all (Centiiv's /banking/banks is NGN bank codes
-          // only); the "institution" here is really a carrier network, a
-          // small fixed enum resolved directly from what the user already
-          // named (see centiivMobileMoneyNetworkFor's own comment on why
-          // this differs from the BANK cross-match above).
-          const searchTerm = recipient.institutionName ?? recipient.institution;
-          const network = centiivMobileMoneyNetworkFor(fiatCurrency, searchTerm);
-          if (network) {
-            provider = selection.provider;
-            finalRecipient = { ...recipient, institution: network, institutionName: network };
-            altRecipient = {
-              institution: network,
-              accountIdentifier: recipient.accountIdentifier,
-              accountName: recipient.accountName,
-              network,
-            };
-          } else {
-            console.log(
-              `[remittance-draft] centiiv won the rate for ${chain} but couldn't resolve a mobile money network for ${fiatCurrency} from "${searchTerm}" — falling back to paycrest, which isn't eligible for ${chain} either.`,
-            );
-          }
         }
       }
     } catch (err) {
@@ -334,9 +282,6 @@ async function finalizeRemittanceDraft(
     if (p === "quidax" && altRecipient) {
       return createQuidaxOrder({ amount: netAmount, network: chain, token: tokenSymbol, fiatCurrency, recipient: altRecipient, reference });
     }
-    if (p === "centiiv" && altRecipient) {
-      return createCentiivOrder({ amount: netAmount, network: chain, token: tokenSymbol, fiatCurrency, recipient: altRecipient, reference });
-    }
     return createOfframpOrder({
       amount: netAmount,
       token: tokenSymbol,
@@ -353,14 +298,13 @@ async function finalizeRemittanceDraft(
     order = await createOrderForProvider(provider);
   } catch (err) {
     // The chosen alt provider's order creation itself failed (e.g. a
-    // name-match rejection at Quidax's bank-account-attach step, or
-    // Centiiv's own live bank-account verification) — the user can still
-    // send via Paycrest, so retry there once before actually giving up.
-    // BUT only if Paycrest actually supports this chain at all — verified
-    // live that it structurally doesn't for Optimism/Solana/Stellar (a
-    // hard "not supported" error, not a liquidity gap), so blindly
-    // retrying there for e.g. a Stellar send just produced Paycrest's own
-    // confusing raw validation error instead of an honest message.
+    // name-match rejection at Quidax's bank-account-attach step) — the
+    // user can still send via Paycrest, so retry there once before
+    // actually giving up. BUT only if Paycrest actually supports this
+    // chain at all — verified live that it structurally doesn't for
+    // Optimism (a hard "not supported" error, not a liquidity gap), so
+    // blindly retrying there would just produce Paycrest's own confusing
+    // raw validation error instead of an honest message.
     if (provider !== "paycrest" && isPaycrestEligible(chain, fiatCurrency)) {
       try {
         provider = "paycrest";
