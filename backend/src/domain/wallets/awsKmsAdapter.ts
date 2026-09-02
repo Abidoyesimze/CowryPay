@@ -11,6 +11,9 @@ import {
   encodeFunctionData,
   parseUnits,
   parseEther,
+  hashTypedData,
+  hexToBytes,
+  serializeSignature,
 } from "viem";
 import { toDataSuffix } from "@celo/attribution-tags";
 import { env } from "../../config/env.js";
@@ -148,8 +151,21 @@ export function kmsAccountFromKey(keyArn: string, address: `0x${string}`) {
     async signMessage() {
       throw new Error("aws-kms account: message signing not supported (transactions only)");
     },
-    async signTypedData() {
-      throw new Error("aws-kms account: typed-data signing not supported (transactions only)");
+    // EIP-712 typed-data signing (e.g. EIP-3009 TransferWithAuthorization for
+    // x402 settlement) — same digest-signing path as signTransaction above,
+    // just fed a typed-data hash instead of a serialized-tx hash. KMS signs
+    // whatever 32-byte digest it's given; it has no idea what the digest
+    // represents.
+    async signTypedData(typedData) {
+      const client = kmsClient();
+      const digest = hexToBytes(hashTypedData(typedData));
+      const { r, s, recovery } = await kmsSignDigest(client, keyArn, digest, address);
+      return serializeSignature({
+        r: numberToHex(r, { size: 32 }),
+        s: numberToHex(s, { size: 32 }),
+        v: recovery ? 28n : 27n,
+        yParity: recovery,
+      });
     },
   });
 }
