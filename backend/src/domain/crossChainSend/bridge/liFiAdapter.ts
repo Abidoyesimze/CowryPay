@@ -1,6 +1,7 @@
 import { createClient, getQuote, getStepTransaction, getStatus } from "@lifi/sdk";
 import type { SDKClient, LiFiStep } from "@lifi/sdk";
 import { encodeFunctionData, parseUnits } from "viem";
+import { toDataSuffix } from "@celo/attribution-tags";
 import { env } from "../../../config/env.js";
 import { getChainConfig, getTokenConfig } from "../../wallets/chains.js";
 import { getWalletAddress } from "../../wallets/awsKmsAdapter.js";
@@ -194,7 +195,24 @@ export const liFiAdapter: BridgeAdapter = {
     if (!stepWithTx.transactionRequest?.to || !stepWithTx.transactionRequest.data) {
       throw new Error("LI.FI did not return a transaction to sign for this route");
     }
-    const { to, data, value } = stepWithTx.transactionRequest;
+    const { to, value } = stepWithTx.transactionRequest;
+    let { data } = stepWithTx.transactionRequest;
+    // ERC-8021 attribution suffix (Agents at Work hackathon) — same Celo-only
+    // gating as awsKmsAdapter.ts's withdraw(), placed on the actual
+    // value-moving bridge call, not the approve() above. Safe to append here
+    // for the same reason it's safe on a plain ERC-20 transfer(): `to` is
+    // LI.FI's own well-known LiFiDiamond contract (an EIP-2535 diamond
+    // proxy), which forwards the ENTIRE raw calldata verbatim via
+    // delegatecall to a facet that does standard Solidity ABI decoding —
+    // decoding never validates msg.data.length beyond what the declared
+    // parameters need, so trailing bytes past the real call are ignored
+    // the same way they are on a plain transfer(). Confirmed live
+    // (2026-09-02) against a real li.quest quote that `to` resolves to
+    // 0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE, LI.FI's canonical diamond
+    // address, not some arbitrary/unaudited per-route contract.
+    if (input.sourceChain.toLowerCase() === "celo") {
+      data = (data + toDataSuffix(env.celoAttributionTag).slice(2)) as `0x${string}`;
+    }
     const sourceTxHash = await sendRawEvmTx(input.sourceChain, to as `0x${string}`, data as `0x${string}`, value ? BigInt(value) : 0n);
 
     return {
