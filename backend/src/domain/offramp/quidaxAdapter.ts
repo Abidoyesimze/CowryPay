@@ -5,22 +5,40 @@ import { env } from "../../config/env.js";
 // "sol" and "lisk", the live API only accepts "solana" and "lsk"; docs list
 // Arbitrum as USDC-supported, the live API rejects it under every name
 // tried). base/solana/ethereum are eligible for USDC on Quidax among our
-// six chains — Celo/Optimism/Stellar aren't supported by Quidax for USDC
-// regardless of naming (see providerSelection.ts for the eligibility gate
-// that keeps this adapter from ever being called for those chains).
-// Ethereum is the same story as "sol"/"lisk" above: neither "ethereum" nor
-// "eth" work, only the non-obvious "erc20" — verified live (2026-09-01)
-// with a real working quote (10 USDC -> fee 25.0, to_amount 13709.4 NGN).
-// Quidax only ever covers NGN among our currencies regardless of chain
-// (see QUIDAX_SUPPORTED_FIAT_CURRENCIES) — Ethereum doesn't change that.
-const NETWORK_NAMES: Record<string, string> = {
-  base: "base",
-  solana: "solana",
-  ethereum: "erc20",
+// chains. Ethereum is the same story as "sol"/"lisk" above: neither
+// "ethereum" nor "eth" work, only the non-obvious "erc20" — verified live
+// (2026-09-01) with a real working quote (10 USDC -> fee 25.0, to_amount
+// 13709.4 NGN). Quidax only ever covers NGN among our currencies regardless
+// of chain (see QUIDAX_SUPPORTED_FIAT_CURRENCIES) — Ethereum doesn't change
+// that.
+//
+// celo/USDT is NOT live-verified the same way — no Quidax merchant
+// credentials were available to test it (their rate-quote endpoint
+// requires x-private-key auth before it'll validate a network name at
+// all, so an unauthenticated probe can't confirm or deny this). Sourced
+// from docs.quidax.io/docs/supported-stablecoins (2026-09-02), which
+// lists "celo" as a valid network for USDT specifically — NOT for USDC,
+// which this same page omits from Celo's row. Given this file's own
+// history of catching that exact docs page wrong on network-name
+// spelling (never on a flat "supported at all" claim), treat the first
+// real quote/order attempt against this as the actual test: if Quidax
+// rejects it, this entry is wrong and should come back out, not be
+// "fixed" by guessing a different string.
+const NETWORK_SUPPORT: Record<string, { network: string; tokens: ReadonlySet<string> }> = {
+  base: { network: "base", tokens: new Set(["USDC"]) },
+  solana: { network: "solana", tokens: new Set(["USDC"]) },
+  ethereum: { network: "erc20", tokens: new Set(["USDC"]) },
+  celo: { network: "celo", tokens: new Set(["USDT"]) },
 };
 
-export function quidaxNetworkFor(chain: string): string | null {
-  return NETWORK_NAMES[chain.toLowerCase()] ?? null;
+// token omitted means "don't filter by token" — used by generic
+// alt-options messaging (providerSelection.ts) that isn't checking a
+// specific real send.
+export function quidaxNetworkFor(chain: string, token?: string): string | null {
+  const entry = NETWORK_SUPPORT[chain.toLowerCase()];
+  if (!entry) return null;
+  if (token && !entry.tokens.has(token.toUpperCase())) return null;
+  return entry.network;
 }
 
 function requireQuidaxSecretKey(): string {
@@ -91,7 +109,7 @@ export async function getOfframpRate(params: {
   amount: string;
   fiatCurrency: string;
 }): Promise<QuidaxRateQuote> {
-  const network = quidaxNetworkFor(params.network);
+  const network = quidaxNetworkFor(params.network, params.token);
   if (!network) throw new Error(`Quidax off-ramp doesn't support chain ${params.network} for ${params.token}`);
   const query = new URLSearchParams({
     token: params.token.toLowerCase(),
@@ -145,7 +163,7 @@ export interface CreatedOrder {
 // reused-order logic (checking validUntil before reusing a locked quote)
 // has something to compare against.
 export async function createOfframpOrder(input: CreateOrderInput): Promise<CreatedOrder> {
-  const network = quidaxNetworkFor(input.network);
+  const network = quidaxNetworkFor(input.network, input.token);
   if (!network) throw new Error(`Quidax off-ramp doesn't support chain ${input.network} for ${input.token}`);
   const { firstName, lastName } = splitName(input.recipient.accountName);
 

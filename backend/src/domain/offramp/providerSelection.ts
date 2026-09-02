@@ -15,15 +15,16 @@ export interface ProviderQuote {
   toAmount: string;
 }
 
-// Quidax's Celo/USDT support (quidaxNetworkFor) still needs a live
-// verification call before this is trusted in production — see
-// quidaxAdapter.ts's own comment history of docs disagreeing with the
-// real API. Gated on fiatCurrency too, not just chain — real bug found
-// live: an eligible-chain send in an unsupported currency (e.g. UGX) was
-// still being compared here, since Quidax's own endpoints don't validate
+// Quidax's Celo/USDT support (quidaxNetworkFor) is docs-sourced, not
+// live-verified — see quidaxAdapter.ts's own comment for exactly what
+// that means. token omitted means "don't filter by token" (generic
+// alt-options messaging below, not a specific real send). Gated on
+// fiatCurrency too, not just chain — real bug found live: an
+// eligible-chain send in an unsupported currency (e.g. UGX) was still
+// being compared here, since Quidax's own endpoints don't validate
 // to_currency either (see QUIDAX_SUPPORTED_FIAT_CURRENCIES's own comment).
-export function isQuidaxEligible(chain: string, fiatCurrency: string): boolean {
-  return quidaxNetworkFor(chain) !== null && QUIDAX_SUPPORTED_FIAT_CURRENCIES.has(fiatCurrency.toUpperCase());
+export function isQuidaxEligible(chain: string, fiatCurrency: string, token?: string): boolean {
+  return quidaxNetworkFor(chain, token) !== null && QUIDAX_SUPPORTED_FIAT_CURRENCIES.has(fiatCurrency.toUpperCase());
 }
 
 function isTokenSupportedOnChain(chain: string, token: string): boolean {
@@ -109,7 +110,7 @@ export async function selectOfframpProvider(params: {
         .catch(() => null)
     : Promise.resolve(null);
 
-  const quidaxPromise: Promise<ProviderQuote | null> = isQuidaxEligible(params.chain, params.fiatCurrency)
+  const quidaxPromise: Promise<ProviderQuote | null> = isQuidaxEligible(params.chain, params.fiatCurrency, token)
     ? getQuidaxRate({ network: params.chain, token, amount: params.amount, fiatCurrency: params.fiatCurrency })
         .then((q) => ({ provider: "quidax" as const, toAmount: q.toAmount }))
         .catch(() => null)
