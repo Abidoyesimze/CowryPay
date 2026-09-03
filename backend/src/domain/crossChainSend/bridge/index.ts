@@ -7,7 +7,7 @@ import { liFiAdapter } from "./liFiAdapter.js";
 // both Circle's docs and their own SDK internals) — so every real call here
 // resolves to liFiAdapter.ts, which composes whichever underlying bridge +
 // swap actually delivers the real, canonical destination token on
-// Base/Optimism/Solana. The plain CCTP adapter and the hand-built Stellar
+// Base/Optimism. The plain CCTP adapter and the hand-built Stellar
 // Soroban integration this used to dispatch to for non-Celo pairs are gone
 // — they were only ever reachable via a source chain that no longer has a
 // balance to send from. Kept as a function (not just calling liFiAdapter

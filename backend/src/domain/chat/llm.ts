@@ -12,8 +12,8 @@ const INTENT_SYSTEM = `You are CowryPay's intent parser. Every user balance live
   {"kind":"remittance","action":"SEND_REMITTANCE","amount":number,"recipientNickname":"string (saved nickname if used, e.g. 'mom')","countryHint":"string (country if mentioned, e.g. 'Nigeria')","institutionHint":"string (bank or mobile money name if mentioned, e.g. 'GTBank', 'MTN MoMo')","accountIdentifier":"string (account/phone number if given)","tokenHint":"string (which token, if named, e.g. 'USDC', 'USDT')"}
 - Withdraw / send crypto to an external wallet ADDRESS on Celo itself (not a bank account, not mobile money, no country/institution/phone number, and no other chain named — a raw wallet address instead, e.g. starting with "0x") — e.g. "withdraw to wallet", "send to my wallet", "send USDC to an address", "crypto withdrawal":
   {"kind":"cryptoWithdrawal","action":"WITHDRAW_TO_WALLET","amount":number,"toAddress":"string (the exact wallet address if given, copy it character-for-character, never guess or complete a partial one)","tokenHint":"string (which token, if named, e.g. 'USDC', 'USDT')"}
-- Move funds from the user's Celo balance to a DIFFERENT chain (cross-chain send / bridge) — recognize phrasing like "I need it on base", "send from celo to base", "bridge my USDC to solana", "move my USDC to optimism". The tell is a DESTINATION chain other than Celo being named — the source is always Celo, never ask about it or extract it:
-  {"kind":"crossChainSend","action":"SEND_CROSS_CHAIN","amount":number,"toAddress":"string (destination wallet address, if given, copy it EXACTLY character-for-character, never guess or complete a partial one)","destinationChainHint":"string (which chain it should end up on: Base, Optimism, or Solana)","tokenHint":"string (which token, if named)"}
+- Move funds from the user's Celo balance to a DIFFERENT chain (cross-chain send / bridge) — recognize phrasing like "I need it on base", "send from celo to base", "move my USDC to optimism". The tell is a DESTINATION chain other than Celo being named — the source is always Celo, never ask about it or extract it:
+  {"kind":"crossChainSend","action":"SEND_CROSS_CHAIN","amount":number,"toAddress":"string (destination wallet address, if given, copy it EXACTLY character-for-character, never guess or complete a partial one)","destinationChainHint":"string (which chain it should end up on: Base or Optimism)","tokenHint":"string (which token, if named)"}
 - Check balance / deposits: {"kind":"admin","action":"BALANCE"}
 - Transaction history / recent sends: {"kind":"admin","action":"TX_HISTORY"}
 - Help / what can you do: {"kind":"admin","action":"HELP"}
@@ -26,7 +26,6 @@ Examples:
 - "Withdraw 20 USDC to 0x1234567890abcdef1234567890abcdef12345678" → {"kind":"cryptoWithdrawal","action":"WITHDRAW_TO_WALLET","amount":20,"toAddress":"0x1234567890abcdef1234567890abcdef12345678"}
 - "Send 20 USDT to Nigeria" → {"kind":"remittance","action":"SEND_REMITTANCE","amount":20,"countryHint":"Nigeria","tokenHint":"USDT"}
 - "I have 10 USDC on celo but I need it to be on base" → {"kind":"crossChainSend","action":"SEND_CROSS_CHAIN","amount":10,"destinationChainHint":"Base"}
-- "Move 25 USDC to Solana, to Ae1234567890abcdef1234567890abcdef1234567890" → {"kind":"crossChainSend","action":"SEND_CROSS_CHAIN","amount":25,"destinationChainHint":"Solana","toAddress":"Ae1234567890abcdef1234567890abcdef1234567890"}
 - "I want to send someone on optimism" → {"kind":"crossChainSend","action":"SEND_CROSS_CHAIN","destinationChainHint":"Optimism"}
 - "What's my balance" → {"kind":"admin","action":"BALANCE"}
 - "What can you do" → {"kind":"admin","action":"HELP"}

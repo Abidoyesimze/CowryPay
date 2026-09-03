@@ -14,8 +14,11 @@ import type { ParsedIntent } from "./schemas.js";
 // ever needs to extract a DESTINATION chain from natural language, never
 // ask the user to name where the funds currently are. Must stay in sync
 // with liFiAdapter.ts's own SUPPORTED_CHAINS (minus "celo" itself, which
-// isn't a valid destination for its own cross-chain send).
-export const DESTINATION_CHAINS = ["base", "optimism", "solana"];
+// isn't a valid destination for its own cross-chain send). Solana was
+// dropped 2026-09-03 — confirmed live against LI.FI's own quote API that
+// no route exists from Celo to Solana for USDC or USDT right now (a real
+// bridge-liquidity gap, not a bug here); see liFiAdapter.ts's own comment.
+export const DESTINATION_CHAINS = ["base", "optimism"];
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);

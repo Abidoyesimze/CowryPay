@@ -361,7 +361,7 @@ export function ChatInterface() {
 
       <div className="hidden lg:flex items-center justify-between px-10 py-3 text-xs text-cowry-muted flex-shrink-0">
         <span>© 2026 CowryPay</span>
-        <span>Native to Celo — bridges to Base, Optimism &amp; Solana</span>
+        <span>Native to Celo — bridges to Base &amp; Optimism</span>
       </div>
 
       {recordError && (

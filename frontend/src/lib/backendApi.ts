@@ -462,10 +462,12 @@ export type CrossChainSendTransition = {
 };
 
 /**
- * Bridges a Celo balance (the only source now) out to Base, Optimism, or
- * Solana, via LI.FI. Chat can build a draft (see CrossChainSendDraft) but
- * never calls this itself, same §9 boundary as initiateCryptoWithdrawal.
- * The PIN is verified server-side inside this call.
+ * Bridges a Celo balance (the only source now) out to Base or Optimism,
+ * via LI.FI (Solana dropped 2026-09-03 — no working bridge route exists
+ * for it right now, confirmed against LI.FI's own quote API). Chat can
+ * build a draft (see CrossChainSendDraft) but never calls this itself,
+ * same §9 boundary as initiateCryptoWithdrawal. The PIN is verified
+ * server-side inside this call.
  */
 export function initiateCrossChainSend(input: {
   sourceChain:      string;

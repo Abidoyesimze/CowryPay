@@ -12,11 +12,13 @@ const CURRENCIES = [
 
 // Celo is the only chain a balance lives on — everything else here is a
 // cross-chain-send DESTINATION (via LI.FI), not a peer deposit chain.
+// Solana dropped 2026-09-03 — no working LI.FI route exists from Celo to
+// Solana right now (confirmed against their real quote API), so it's not
+// offered as a destination anymore.
 const CHAINS = [
   { name: "Celo",     logo: "/celo.png" },
   { name: "Base",     logo: "/Base.svg" },
   { name: "Optimism", logo: "/Optimism.svg" },
-  { name: "Solana",   logo: null },
 ];
 
 const FEATURES = [
@@ -35,7 +37,7 @@ const FEATURES = [
   {
     img: "/send.png",
     title: "Cross-Chain Send",
-    desc: "Move your Celo USDC out to Base, Optimism, or Solana right in the app — no bridge UI, no gas fees, no external wallet.",
+    desc: "Move your Celo USDC out to Base or Optimism right in the app — no bridge UI, no gas fees, no external wallet.",
     tint: "rgba(99,102,241,0.08)",
   },
   {
@@ -92,8 +94,8 @@ export default function LandingPage() {
 
         <p className="max-w-md mx-auto text-cowry-muted text-sm sm:text-base leading-relaxed mb-10">
           CowryPay is an AI-powered crypto payment app, native to Celo. Send
-          money to a bank account abroad, bridge USDC out to Base, Optimism,
-          or Solana, or check your balance — just type what you want.
+          money to a bank account abroad, bridge USDC out to Base or
+          Optimism, or check your balance — just type what you want.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-16">
@@ -212,7 +214,7 @@ export default function LandingPage() {
 
             </div>
           </div>
-          <p className="text-center text-cowry-muted text-xs mt-4">Native to Celo — bridges to Base, Optimism &amp; Solana</p>
+          <p className="text-center text-cowry-muted text-xs mt-4">Native to Celo — bridges to Base &amp; Optimism</p>
         </div>
       </section>
 

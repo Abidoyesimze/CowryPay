@@ -5,7 +5,6 @@ import { toDataSuffix } from "@celo/attribution-tags";
 import { env } from "../../../config/env.js";
 import { getChainConfig, getTokenConfig } from "../../wallets/chains.js";
 import { getWalletAddress } from "../../wallets/awsKmsAdapter.js";
-import { getSolanaMint, SOLANA_TOKEN_DECIMALS } from "../../wallets/solanaAdapter.js";
 import { sendRawEvmTx } from "./evmRawTx.js";
 import type { BridgeAdapter, BridgeInitiateInput, BridgeInitiateResult, BridgePhaseCheckResult, BridgeQuote } from "./adapter.js";
 
@@ -30,12 +29,13 @@ import type { BridgeAdapter, BridgeInitiateInput, BridgeInitiateResult, BridgePh
 // slightly less than netAmount (slippage) — accepted, deliberate
 // trade-off, not something to "fix" by pretending it's 1:1.
 //
-// Also handles Celo->Solana, since LI.FI is chain-agnostic: confirmed
-// live (li.quest/v1/chains) Solana's LI.FI chain ID is 1151111081099710.
-// Solana is DESTINATION-only here — we never sign a Solana-side
-// transaction ourselves (LI.FI's own relayer delivers funds on that
-// side), so there's no Solana signing path in this file at all.
-const LIFI_CHAIN_IDS: Record<string, number> = { celo: 42220, base: 8453, optimism: 10, solana: 1151111081099710 };
+// Solana was supported as a destination too until 2026-09-03, then
+// dropped: confirmed live against li.quest's own quote API that NO
+// route exists from Celo to Solana for either USDC or USDT right now
+// ("None of the available routes could successfully generate a tx",
+// HTTP 422) — a real bridge-liquidity gap, not something our code could
+// fix. Re-add if LI.FI's route coverage there ever changes.
+const LIFI_CHAIN_IDS: Record<string, number> = { celo: 42220, base: 8453, optimism: 10 };
 
 // Which of the chains LI.FI knows about (LIFI_CHAIN_IDS) are actually
 // offered right now as a cross-chain-send DESTINATION. Optimism was
@@ -43,7 +43,7 @@ const LIFI_CHAIN_IDS: Record<string, number> = { celo: 42220, base: 8453, optimi
 // reasoning no longer applies: destination availability was never gated
 // on having a balance to send FROM, only on having one to send TO, and
 // Celo is the only source now regardless. Re-added.
-const SUPPORTED_CHAINS = new Set(["celo", "base", "optimism", "solana"]);
+const SUPPORTED_CHAINS = new Set(["celo", "base", "optimism"]);
 
 // Conservative defaults — not yet tuned against real transfers. slippage
 // is fractional (0.005 = 0.5%); maxPriceImpact hides routes worse than
@@ -58,14 +58,13 @@ function getLiFiClient(): SDKClient {
     integrator: "cowrypay",
     apiUrl: "https://li.quest/v1",
     debug: false,
-    // Feeds LI.FI our own already-verified RPC URLs (chains.ts /
-    // env.solanaRpcUrl) for whichever chains it needs to read from,
-    // rather than whatever public default it would otherwise pick.
+    // Feeds LI.FI our own already-verified RPC URLs (chains.ts) for
+    // whichever chains it needs to read from, rather than whatever public
+    // default it would otherwise pick.
     rpcUrls: {
       [LIFI_CHAIN_IDS.base]: [getChainConfig("base").rpcUrl],
       [LIFI_CHAIN_IDS.optimism]: [getChainConfig("optimism").rpcUrl],
       [LIFI_CHAIN_IDS.celo]: [getChainConfig("celo").rpcUrl],
-      [LIFI_CHAIN_IDS.solana]: [env.solanaRpcUrl],
     },
   });
   return cachedClient;
@@ -90,35 +89,25 @@ function requireLiFiChainId(chain: string): number {
   return chainId;
 }
 
-// Token address/decimals still differ between EVM chains (chains.ts's
-// registry) and Solana (its own mint registry in solanaAdapter.ts) even
-// with Solana destination-only — a route's TO side can still be Solana.
+// EVM-only now that Solana is gone (see the LIFI_CHAIN_IDS comment above)
+// — a plain chains.ts lookup for both sides of the route.
 async function tokenAddressFor(chain: string, tokenSymbol: string): Promise<{ address: string; decimals: number }> {
-  if (chain.toLowerCase() === "solana") {
-    return { address: getSolanaMint(tokenSymbol), decimals: SOLANA_TOKEN_DECIMALS };
-  }
   return getTokenConfig(chain, tokenSymbol);
 }
 
 // The source side is always our own EVM payout wallet now (Celo is the
-// only source chain) — no more Solana-treasury-signer branch here.
+// only source chain).
 async function sourceSignerAddress(): Promise<string> {
   if (!env.awsKmsPayoutKeyArn) throw new Error("AWS_KMS_PAYOUT_KEY_ARN must be set to bridge via LI.FI");
   return getWalletAddress(env.awsKmsPayoutKeyArn);
 }
 
 // A pure quote (no real send happening yet) has no real recipient to give
-// LI.FI — any syntactically valid address on the destination chain is a
-// safe placeholder, since quotes are priced off amount/route, not the
-// specific recipient. Our own EVM address works for Base/Optimism (same
-// address across every EVM chain); Solana has no equivalent "our own
-// address" anymore (destination-only, no treasury signer), so its System
-// Program address — a fixed, always-valid, unowned Solana account — is
-// used instead purely as a well-formed placeholder.
-const SOLANA_PLACEHOLDER_ADDRESS = "11111111111111111111111111111111";
-
+// LI.FI — our own EVM address is a safe placeholder for any destination
+// (same address across every EVM chain this adapter supports), since
+// quotes are priced off amount/route, not the specific recipient.
 async function placeholderAddressFor(chain: string): Promise<string> {
-  if (chain.toLowerCase() === "solana") return SOLANA_PLACEHOLDER_ADDRESS;
+  void chain;
   return sourceSignerAddress();
 }
 
