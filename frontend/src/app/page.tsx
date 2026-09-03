@@ -41,7 +41,7 @@ const FEATURES = [
   {
     img: "/AI.png",
     title: "AI-Powered",
-    desc: "An onchain AI agent, registered with Self Agent ID (ERC-8004), parses your intent and executes.",
+    desc: "An onchain AI agent with a real ERC-8004 identity, human-verified through Self Protocol, parses your intent and executes.",
     tint: "rgba(0,212,55,0.08)",
   },
   {
