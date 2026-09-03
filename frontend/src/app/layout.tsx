@@ -4,6 +4,11 @@ import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { InstallPrompt } from "@/components/InstallPrompt";
 
 export const metadata: Metadata = {
+  // Resolves the relative openGraph.images URL below into an absolute one
+  // for social-preview cards — without this Next falls back to
+  // http://localhost:3000, which is fine locally but wrong once deployed.
+  // Set NEXT_PUBLIC_SITE_URL to the real deployed domain once it exists.
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title:       "CowryPay — Talk. Send. Automate.",
   description: "AI-powered crypto payments on Celo. Send money as easily as sending a message.",
   // Not using the `manifest` shorthand here — Next 14's Metadata API
