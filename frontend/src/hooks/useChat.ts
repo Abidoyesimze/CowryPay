@@ -1,6 +1,5 @@
 "use client";
 import { useState, useCallback, useRef, useEffect } from "react";
-import { resetSession } from "@/lib/agent";
 import {
   sendChatMessage,
   createOfframpSend,
@@ -16,10 +15,6 @@ import { formatFiat, formatToken } from "@/lib/currency";
 import { computeCryptoWithdrawalFeeSplit, computeCrossChainSendFeeSplit } from "@/lib/cryptoWithdrawalFee";
 import { sendTransaction, waitForTransaction } from "@/lib/wallet";
 import type { Message, ChatResponse, EncodedTxJson } from "@/lib/types";
-
-function newSessionId(): string {
-  return `session_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-}
 
 /** Clear server pending state after this long without a user message. */
 const IDLE_RESET_MS = 20 * 60 * 1000;
@@ -49,7 +44,6 @@ export function useChat(user: PublicUser | null, onDepositIntent?: (chain: strin
   const [activeCrossChainSendReference, setActiveCrossChainSendReference] = useState<string | null>(null);
   /** Set right after a chat-confirmed cross-chain send is submitted — opens its receipt modal. */
   const [receiptCrossChainSendId, setReceiptCrossChainSendId] = useState<string | null>(null);
-  const sessionIdRef = useRef(newSessionId());
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,18 +66,15 @@ export function useChat(user: PublicUser | null, onDepositIntent?: (chain: strin
     fiatCurrency: string;
   } | null>(null);
 
-  const getSessionId = useCallback(() => sessionIdRef.current, []);
-
-  /** Rotate session id and wipe server pending state — no UI changes. */
+  // Real backend session/draft state is entirely server-side, keyed by the
+  // authenticated user (see domain/chat/sessionRepository.ts) — there's no
+  // client-generated session id in the current architecture, and no
+  // corresponding reset endpoint to call. This used to also POST to
+  // /api/session/reset (a leftover from before the backend/frontend
+  // split), which never did anything real even before that route was
+  // deleted. All that's left to actually clear here is local UI state.
   const resetSessionState = useCallback(async () => {
-    const oldSessionId = sessionIdRef.current;
-    sessionIdRef.current = newSessionId();
     pendingSaveRecipientRef.current = null;
-    try {
-      await resetSession(oldSessionId);
-    } catch {
-      // Stale Redis state expires within 24h.
-    }
   }, []);
 
   const scheduleIdleReset = useCallback(() => {
