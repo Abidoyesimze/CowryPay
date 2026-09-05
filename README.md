@@ -1,6 +1,6 @@
 # CowryPay
 
-An AI-agent-powered payments and remittance app built on **Celo** for the **Agents at Work Hackathon**. Users talk to an in-app AI agent to deposit stablecoins, send money on-chain, off-ramp to local currency, and send cross-chain — with every Celo-mainnet payout carrying the project's ERC-8021 attribution tag (`celo_9ef59d7031c8`).
+An AI-agent-powered payments and cross border remittance across africa app built on **Celo** for the **Agents at Work Hackathon**. Users talk to an in-app AI agent to deposit stablecoins, send money on-chain, off-ramp to local currencies in Nigeria, kenya, Uganda,Tanzania and Malawi, and send cross-chain Transfers with every Celo-mainnet payout carrying the project's ERC-8021 attribution tag (`celo_9ef59d7031c8`).
 
 Live demo: https://cowry-pay.vercel.app
 
