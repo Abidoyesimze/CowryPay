@@ -18,10 +18,12 @@ export default function SignUpPage() {
     setError("");
     setLoading(true);
     try {
-      const { error: otpError } = await supabase.auth.signInWithOtp({ email });
+      const { error: otpError, data } = await supabase.auth.signInWithOtp({ email });
+      console.log("signInWithOtp result:", { data, otpError });
       if (otpError) throw otpError;
       router.push(`/verify?email=${encodeURIComponent(email)}&flow=signup`);
     } catch (err) {
+      console.error("signInWithOtp error caught:", err);
       setError(getErrorMessage(err, "Could not send verification code"));
       setLoading(false);
     }

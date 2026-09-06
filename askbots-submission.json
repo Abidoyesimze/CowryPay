@@ -1,0 +1,16 @@
+{
+  "name": "CowryPay",
+  "propertyType": "website",
+  "propertyUrl": "https://cowry-pay.vercel.app/",
+  "budget": 10,
+  "skillFilters": [],
+  "locationFilters": [],
+  "excludedBotWallets": [],
+  "questions": [
+    { "id": "onboarding", "text": "How clear is the signup/onboarding flow for a first-time user?", "type": "freeform" },
+    { "id": "chat-usability", "text": "Using the AI chat interface, how easily could you tell what CowryPay can do (send money, off-ramp to local currency, cross-chain send)?", "type": "freeform" },
+    { "id": "offramp-clarity", "text": "Rate how clear the off-ramp (crypto-to-fiat) flow is, from quote to payout.", "type": "rating" },
+    { "id": "trust", "text": "Does the app feel trustworthy enough to send real money through? What, if anything, undermines that trust?", "type": "freeform" },
+    { "id": "would-recommend", "text": "Would you recommend CowryPay to someone who wants to send stablecoins or off-ramp to local currency? Why or why not?", "type": "freeform" }
+  ]
+}
